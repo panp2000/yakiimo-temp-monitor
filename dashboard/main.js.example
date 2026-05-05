@@ -59,6 +59,29 @@ const EXTRA_METRICS = [
   { key: "pressure", label: "気圧", unit: "hPa", icon: "気", varName: "--color-ch-pressure", source: "env", field: "pressure_hpa", digits: 0 },
 ];
 
+// --------------------------- 表示用フィルタ ---------------------------
+// 3点中央値フィルタ (表示用、データ層は無加工)
+// MAX31855 の量子化ジッタ (±0.25°C / 1 LSB) を視覚的に除去するためにのみ使う。
+// 入力: [{x: ts, y: val}, ...] 形式の配列 (生データ)
+// 出力: 同形式・同長の新配列。各 y は自身 + 前後 1 点の中央値。
+// 両端 (i=0, i=末尾) は隣接 1 点との 2 値だけで中央値を取る (= 平均と等価)。
+// 中央値ゆえ平均フィルタのような遅延は発生せず、急変への追従性は維持される。
+function median3Filter(points) {
+  if (!points || points.length < 3) return points ? points.slice() : points;
+  const out = new Array(points.length);
+  for (let i = 0; i < points.length; i++) {
+    const a = points[Math.max(0, i - 1)].y;
+    const b = points[i].y;
+    const c = points[Math.min(points.length - 1, i + 1)].y;
+    const sorted = [a, b, c].filter(v => v != null && !isNaN(v)).sort((x, y) => x - y);
+    out[i] = {
+      x: points[i].x,
+      y: sorted.length === 0 ? null : sorted[Math.floor(sorted.length / 2)],
+    };
+  }
+  return out;
+}
+
 // --------------------------- DOM 参照 ---------------------------
 const $cards            = document.getElementById("current-cards");
 const $updated          = document.getElementById("updated");
@@ -698,6 +721,11 @@ async function fetchIncrementalData(sessionId, afterIso) {
 
 // fullSessionData から現窓に合うものだけフィルタしてチャートに反映する。
 // 窓切替時・増分追記時の両方から呼ばれる。Supabase へは行かない。
+//
+// 表示直前で median3Filter を掛けて MAX31855 の 1 LSB ジッタを視覚的に除去する。
+// fullSessionData (生データキャッシュ) は無加工のまま保持し、フィルタは
+// chart.data.datasets[i].data に格納する直前でだけ適用する。
+// → 生データへの再フィルタリング (過度な平滑化) は発生しない。
 function applyWindowToChart() {
   if (!chart) return;
   const preset = getCurrentPreset();
@@ -706,8 +734,8 @@ function applyWindowToChart() {
   for (let i = 0; i < CHANNELS.length; i++) {
     const ch = CHANNELS[i];
     const series = fullSessionData[ch.key] || [];
-    const filtered = minMs > 0 ? series.filter(p => p.x >= minMs) : series.slice();
-    chart.data.datasets[i].data = filtered;
+    const windowed = minMs > 0 ? series.filter(p => p.x >= minMs) : series.slice();
+    chart.data.datasets[i].data = median3Filter(windowed);
   }
   chart.update("none");
 }
