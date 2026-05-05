@@ -232,9 +232,26 @@ python3 -m http.server 8000
 # ブラウザで http://localhost:8000/ を開く
 ```
 
-### Cloudflare Pages デプロイ (任意)
+### Cloudflare Pages 自動デプロイ (推奨)
 
-任意ですが、本リポジトリには `secrets.yaml` から `main.js` への値同期 + `wrangler` でのデプロイを一括実行するスクリプトを同梱しています。
+GitHub リポを Cloudflare Pages に接続すると、main ブランチへの push で自動デプロイされます。
+
+1. Cloudflare Dashboard → Workers & Pages → Create application → Pages → Connect to Git
+2. リポジトリ `panp2000/yakiimo-temp-monitor` を選択
+3. Build settings:
+   - Build command: `cd dashboard && bash build.sh`
+   - Build output directory: `dashboard`
+4. Environment variables (Production):
+   - `SUPABASE_URL`
+   - `SUPABASE_ANON_KEY`
+   - `BRAND_NAME`
+5. Save and Deploy
+
+以降、main へ push すると自動で再デプロイされます。ビルド時は [`dashboard/build.sh`](dashboard/build.sh) が `main.js.example` から `main.js` を生成します。env vars 未設定 / プレースホルダ残留はビルド失敗で誤公開を防ぎます。
+
+### Cloudflare Pages 手動デプロイ (緊急時用)
+
+GitHub 連携が使えない場合のフォールバック。`secrets.yaml` から `main.js` への値同期 + `wrangler` でのデプロイを一括実行するスクリプトを同梱しています。
 
 ```bash
 bash scripts/deploy-dashboard.sh
