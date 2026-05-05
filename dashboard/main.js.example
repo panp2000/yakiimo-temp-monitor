@@ -1,0 +1,1056 @@
+// yakiimo-temp-monitor dashboard main script
+// Vanilla JS / Chart.js v4 / @supabase/supabase-js v2 (CDN)
+
+// --------------------------- 設定 ---------------------------
+// デプロイ時に各自書き換えること(anon key は RLS で守られているので公開可)
+const SUPABASE_URL = "https://YOUR_PROJECT.supabase.co";
+const SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_KEY";
+
+// 屋号 (店名・ブランド)
+// 例: "高砂", "焼き芋本舗" など
+// 空文字 / "[屋号]" のままなら、タイトル冒頭にプレフィックス無しで表示する
+const BRAND_NAME = "[屋号]";
+
+const TABLE = "yakiimo_temp_logs";
+const REFRESH_INTERVAL_MS = 5000;             // 5秒ごとに増分取得
+const STALE_THRESHOLD_MS = 30 * 1000;         // 30秒データなしで stale 判定
+
+// チャート表示窓のプリセット (UI のタイムスケール調整ボタンで切替)
+// ms === null は「全期間」(セッション開始から現在まで)
+const WINDOW_PRESETS = [
+  { key: "1m",  label: "1分",   ms: 60 * 1000 },
+  { key: "5m",  label: "5分",   ms: 5 * 60 * 1000 },
+  { key: "30m", label: "30分",  ms: 30 * 60 * 1000 },
+  { key: "1h",  label: "1時間", ms: 60 * 60 * 1000 },
+  { key: "2h",  label: "2時間", ms: 2 * 60 * 60 * 1000 },
+  { key: "all", label: "全期間", ms: null },
+];
+const DEFAULT_WINDOW_KEY = "30m";
+const WINDOW_STORAGE_KEY = "yakiimo-window";
+let currentWindowKey = DEFAULT_WINDOW_KEY;
+
+// チャネル表示/非表示の永続化キー (温度カード click でグラフ系列を toggle)
+const HIDDEN_CHANNELS_STORAGE_KEY = "yakiimo-hidden-channels";
+let hiddenChannels = new Set();
+
+// ライブ状態判定の閾値
+const LIVE_THRESHOLD_MS  = 5 * 60 * 1000;        // 5分以内 → live
+const STALE_LIVE_MS      = 60 * 60 * 1000;       // 1時間以内 → stale (まだ更新を続ける)
+                                                 // それを超えると offline (ポーリング停止)
+
+// チャネル定義(順序・ラベル・CSS変数名)
+// key:     Supabase クエリで使う内部識別子 (変更禁止)
+// label:   チャート凡例で使う英語ラベル (互換性のため残す)
+// display: UI 表示用の日本語ラベル
+// icon:    カードに表示する漢字 1文字 (絵文字不使用)
+// varName: CSS variable 名 (テーマ切替で色を引く)
+const CHANNELS = [
+  { key: "potato_internal", label: "Potato Internal", display: "芋 内部温度", icon: "内", varName: "--color-ch-potato-internal" },
+  { key: "potato_surface",  label: "Potato Surface",  display: "芋 表面温度", icon: "皮", varName: "--color-ch-potato-surface"  },
+  { key: "kiln_ambient",    label: "Kiln Ambient",    display: "釜内部温度", icon: "釜", varName: "--color-ch-kiln-ambient"    },
+  { key: "stone_surface",   label: "Stone Surface",   display: "石 表面温度", icon: "石", varName: "--color-ch-stone-surface"   },
+  { key: "env",             label: "Environment",     display: "気温",        icon: "外", varName: "--color-ch-env"             },
+];
+
+// 温度以外の追加メトリクス (env レコードから抽出してカード表示。チャートには載せない)
+// source: latest map のキー (channel 値) / field: 行内のフィールド名
+const EXTRA_METRICS = [
+  { key: "humidity", label: "湿度", unit: "%",   icon: "水", varName: "--color-ch-humidity", source: "env", field: "humidity_pct", digits: 1 },
+  { key: "pressure", label: "気圧", unit: "hPa", icon: "気", varName: "--color-ch-pressure", source: "env", field: "pressure_hpa", digits: 0 },
+];
+
+// --------------------------- DOM 参照 ---------------------------
+const $cards            = document.getElementById("current-cards");
+const $updated          = document.getElementById("updated");
+const $liveIndicator    = document.getElementById("live-indicator");
+const $warning          = document.getElementById("warning-banner");
+
+// ライブ状態ヘッダ DOM
+const $liveHeader       = document.getElementById("live-header");
+const $liveStatusDot    = document.getElementById("live-status-dot");
+const $liveStatusLabel  = document.getElementById("live-status-label");
+const $liveElapsed      = document.getElementById("live-elapsed");
+
+// テーマ切替
+const $themeToggle      = document.getElementById("theme-toggle");
+
+// --------------------------- グローバル状態 ---------------------------
+let sb = null;
+let chart = null;
+let currentSession = null;
+let sessionStartIso = null;       // 選択セッション内の最古データ
+let lastMeasuredAtIso = null;     // 増分取得用カーソル
+let refreshTimer = null;
+let elapsedTimer = null;
+
+// セッション全期間の生データキャッシュ (channel 別、温度時系列のみ)
+// 形: { potato_internal: [{x: msTimestamp, y: tempC}, ...], ... }
+// 窓切替は再 fetch せず、ここからフィルタするだけ
+let fullSessionData = {
+  potato_internal: [],
+  potato_surface: [],
+  kiln_ambient: [],
+  stone_surface: [],
+  env: [],
+};
+// 湿度・気圧はチャート未掲載ゆえ最新値だけ別変数で保持
+let latestEnvHumidity = null;
+let latestEnvPressure = null;
+
+// 現在のライブ状態 ("live" | "stale" | "offline")
+let liveMode = "offline";
+
+// --------------------------- テーマ管理 ---------------------------
+const THEME_STORAGE_KEY = "yakiimo-theme";
+
+function getThemeColor(varName) {
+  return getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+}
+
+// hex (#rrggbb) に alpha (0..1) を足して rgba 文字列にする
+function withAlpha(hex, alpha) {
+  if (!hex) return `rgba(0, 0, 0, ${alpha})`;
+  const m = hex.match(/^#([0-9a-f]{6})$/i) || hex.match(/^#([0-9a-f]{3})$/i);
+  if (!m) return hex; // 解釈できない値はそのまま返す
+  let r, g, b;
+  if (m[1].length === 6) {
+    r = parseInt(m[1].slice(0, 2), 16);
+    g = parseInt(m[1].slice(2, 4), 16);
+    b = parseInt(m[1].slice(4, 6), 16);
+  } else {
+    r = parseInt(m[1][0] + m[1][0], 16);
+    g = parseInt(m[1][1] + m[1][1], 16);
+    b = parseInt(m[1][2] + m[1][2], 16);
+  }
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  // チャート / カードの色を再評価
+  refreshChartTheme();
+  refreshCardAccents();
+}
+
+// 現在のテーマに応じて切替ボタンの aria-label / title を更新する
+function updateToggleAriaLabel() {
+  const btn = document.getElementById("theme-toggle");
+  if (!btn) return;
+  const current = document.documentElement.getAttribute("data-theme");
+  const label = current === "light" ? "ダークモードへ切替" : "ライトモードへ切替";
+  btn.setAttribute("aria-label", label);
+  btn.setAttribute("title", label);
+}
+
+function initTheme() {
+  // index.html 側で既に data-theme は設定済みだが、念のため整合性を取る
+  let stored = null;
+  try { stored = localStorage.getItem(THEME_STORAGE_KEY); } catch (_) {}
+  const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+  const current = document.documentElement.getAttribute("data-theme")
+    || stored
+    || (prefersDark ? "dark" : "light");
+  document.documentElement.setAttribute("data-theme", current);
+  updateToggleAriaLabel();
+}
+
+function toggleTheme() {
+  const current = document.documentElement.getAttribute("data-theme") || "light";
+  const next = current === "light" ? "dark" : "light";
+  applyTheme(next);
+  try { localStorage.setItem(THEME_STORAGE_KEY, next); } catch (_) {}
+  updateToggleAriaLabel();
+}
+
+// 各 metric-card の --card-accent を現在のテーマに合わせて更新
+function refreshCardAccents() {
+  if (!$cards) return;
+  for (const ch of CHANNELS) {
+    const card = $cards.querySelector(`[data-channel="${ch.key}"]`);
+    if (card) card.style.setProperty("--card-accent", getThemeColor(ch.varName));
+  }
+  for (const m of EXTRA_METRICS) {
+    const card = $cards.querySelector(`[data-metric="${m.key}"]`);
+    if (card) card.style.setProperty("--card-accent", getThemeColor(m.varName));
+  }
+}
+
+// チャートの色 (チャネル線・グリッド・テキスト) を現在のテーマに合わせて更新
+function refreshChartTheme() {
+  if (!chart) return;
+  const ink       = getThemeColor("--ink");
+  const inkMuted  = getThemeColor("--ink-muted");
+  const borderSoft = getThemeColor("--border-soft");
+  const bgCard    = getThemeColor("--bg-card");
+  const accentHot = getThemeColor("--accent-hot");
+
+  // Chart.js デフォルト
+  Chart.defaults.color = inkMuted;
+  Chart.defaults.borderColor = withAlpha(ink, 0.06);
+
+  // チャネル線色
+  for (let i = 0; i < CHANNELS.length; i++) {
+    const ch = CHANNELS[i];
+    const ds = chart.data.datasets[i];
+    if (!ds) continue;
+    const color = getThemeColor(ch.varName);
+    ds.borderColor = color;
+    ds.backgroundColor = withAlpha(color, 0.10);
+    ds.pointHoverBackgroundColor = color;
+    ds.pointHoverBorderColor = bgCard;
+  }
+
+  // legend
+  if (chart.options.plugins && chart.options.plugins.legend) {
+    chart.options.plugins.legend.labels.color = ink;
+  }
+  // tooltip
+  if (chart.options.plugins && chart.options.plugins.tooltip) {
+    const tip = chart.options.plugins.tooltip;
+    tip.backgroundColor = withAlpha(getThemeColor("--bg-elevated"), 0.96);
+    tip.borderColor = accentHot;
+    tip.titleColor = ink;
+    tip.bodyColor = ink;
+  }
+  // axes
+  if (chart.options.scales) {
+    const x = chart.options.scales.x;
+    const y = chart.options.scales.y;
+    if (x) {
+      x.ticks.color = inkMuted;
+      x.grid.color = withAlpha(ink, 0.05);
+      x.border.color = withAlpha(ink, 0.10);
+    }
+    if (y) {
+      y.ticks.color = inkMuted;
+      if (y.title) y.title.color = inkMuted;
+      y.grid.color = withAlpha(ink, 0.05);
+      y.border.color = withAlpha(ink, 0.10);
+    }
+  }
+  chart.update("none");
+}
+
+// --------------------------- タイムスケール ---------------------------
+function getCurrentPreset() {
+  return WINDOW_PRESETS.find(p => p.key === currentWindowKey)
+      || WINDOW_PRESETS.find(p => p.key === DEFAULT_WINDOW_KEY);
+}
+
+function initWindowKey() {
+  try {
+    const stored = localStorage.getItem(WINDOW_STORAGE_KEY);
+    if (stored && WINDOW_PRESETS.some(p => p.key === stored)) {
+      currentWindowKey = stored;
+    }
+  } catch (_) {}
+}
+
+function renderScaleToggle() {
+  const container = document.getElementById("scale-toggle");
+  if (!container) return;
+  container.innerHTML = "";
+  for (const preset of WINDOW_PRESETS) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "scale-btn";
+    btn.dataset.windowKey = preset.key;
+    btn.textContent = preset.label;
+    if (preset.key === currentWindowKey) btn.dataset.active = "true";
+    btn.addEventListener("click", () => setWindowKey(preset.key));
+    container.appendChild(btn);
+  }
+}
+
+function setWindowKey(key) {
+  if (key === currentWindowKey) return;
+  if (!WINDOW_PRESETS.some(p => p.key === key)) return;
+  currentWindowKey = key;
+  try { localStorage.setItem(WINDOW_STORAGE_KEY, key); } catch (_) {}
+  document.querySelectorAll(".scale-btn").forEach(b => {
+    if (b.dataset.windowKey === key) b.dataset.active = "true";
+    else delete b.dataset.active;
+  });
+  // 再 fetch せず、キャッシュからフィルタしてチャートに反映
+  applyWindowToChart();
+  updateChartRange();
+}
+
+function updateChartRange() {
+  if (!chart) return;
+  const preset = getCurrentPreset();
+  const now = Date.now();
+  if (preset && preset.ms != null) {
+    chart.options.scales.x.min = now - preset.ms;
+    chart.options.scales.x.max = now;
+  } else {
+    chart.options.scales.x.min = sessionStartIso ? new Date(sessionStartIso).valueOf() : undefined;
+    chart.options.scales.x.max = now;
+  }
+  chart.update("none");
+}
+
+// --------------------------- チャネル表示切替 (カード click で toggle) ---------------------------
+function loadHiddenChannels() {
+  try {
+    const stored = localStorage.getItem(HIDDEN_CHANNELS_STORAGE_KEY);
+    if (stored) {
+      const arr = JSON.parse(stored);
+      if (Array.isArray(arr)) {
+        // 既知チャネルのみ採用 (将来チャネル名が変わった時の安全弁)
+        const valid = arr.filter(k => CHANNELS.some(ch => ch.key === k));
+        hiddenChannels = new Set(valid);
+      }
+    }
+  } catch (_) {}
+}
+
+function saveHiddenChannels() {
+  try {
+    localStorage.setItem(HIDDEN_CHANNELS_STORAGE_KEY, JSON.stringify([...hiddenChannels]));
+  } catch (_) {}
+}
+
+function toggleChannelVisibility(channelKey) {
+  // 温度ch以外 (湿度・気圧) は無視
+  if (!CHANNELS.some(ch => ch.key === channelKey)) return;
+  if (hiddenChannels.has(channelKey)) hiddenChannels.delete(channelKey);
+  else hiddenChannels.add(channelKey);
+  saveHiddenChannels();
+  applyChannelVisibility();
+}
+
+// hiddenChannels の状態をチャートとカードに反映する
+function applyChannelVisibility() {
+  // チャートのデータセット表示/非表示
+  if (chart) {
+    CHANNELS.forEach((ch, i) => {
+      const ds = chart.data.datasets[i];
+      if (!ds) return;
+      ds.hidden = hiddenChannels.has(ch.key);
+    });
+    chart.update("none");
+  }
+  // カードに muted クラス + aria-pressed を反映
+  if ($cards) {
+    CHANNELS.forEach(ch => {
+      const card = $cards.querySelector(`[data-channel="${ch.key}"]`);
+      if (!card) return;
+      const hidden = hiddenChannels.has(ch.key);
+      if (hidden) card.classList.add("muted");
+      else card.classList.remove("muted");
+      // aria-pressed: ON (表示中) = "true", OFF (非表示) = "false"
+      card.setAttribute("aria-pressed", hidden ? "false" : "true");
+    });
+  }
+}
+
+// --------------------------- 初期化 ---------------------------
+function applyBrandName() {
+  const brand = (BRAND_NAME && BRAND_NAME !== "[屋号]") ? BRAND_NAME + " " : "";
+  const title = brand + "やきいもリアルタイム温度モニター";
+  document.title = title;
+  const h1 = document.querySelector(".brand-title");
+  if (h1) h1.textContent = title;
+}
+
+function showWarning(html) {
+  $warning.innerHTML = html;
+  $warning.classList.remove("hidden");
+}
+
+function hideWarning() {
+  $warning.classList.add("hidden");
+}
+
+function buildCards() {
+  $cards.innerHTML = "";
+  // 温度カード (5枚) — click でグラフ系列の表示/非表示を切替
+  for (const ch of CHANNELS) {
+    const el = document.createElement("article");
+    el.className = "metric-card stale";
+    el.style.setProperty("--card-accent", getThemeColor(ch.varName));
+    el.dataset.channel = ch.key;
+    // a11y: button role + keyboard 対応
+    el.setAttribute("role", "button");
+    el.setAttribute("tabindex", "0");
+    // 初期 aria-pressed は applyChannelVisibility が後で正しく設定する
+    el.setAttribute("aria-pressed", hiddenChannels.has(ch.key) ? "false" : "true");
+    el.setAttribute("title", "クリックでグラフ表示/非表示");
+    el.innerHTML = `
+      <div class="card-label">
+        <span class="card-icon" aria-hidden="true">${ch.icon || ""}</span>
+        <span class="card-name">${ch.display}</span>
+      </div>
+      <div class="card-value">
+        <span class="card-number">--</span>
+        <span class="card-unit">°C</span>
+      </div>
+    `;
+    $cards.appendChild(el);
+  }
+  // 湿度・気圧カード (2枚) — 温度と同格レイアウト
+  for (const m of EXTRA_METRICS) {
+    const el = document.createElement("article");
+    el.className = "metric-card stale";
+    el.style.setProperty("--card-accent", getThemeColor(m.varName));
+    el.dataset.metric = m.key;
+    el.innerHTML = `
+      <div class="card-label">
+        <span class="card-icon" aria-hidden="true">${m.icon || ""}</span>
+        <span class="card-name">${m.label}</span>
+      </div>
+      <div class="card-value">
+        <span class="card-number">--</span>
+        <span class="card-unit">${m.unit}</span>
+      </div>
+    `;
+    $cards.appendChild(el);
+  }
+}
+
+function initSupabase() {
+  if (!window.supabase || !window.supabase.createClient) {
+    showWarning("Supabase JS ライブラリの読み込みに失敗しました。CDN への接続を確認してください。");
+    return false;
+  }
+  if (!SUPABASE_ANON_KEY || SUPABASE_ANON_KEY === "YOUR_SUPABASE_ANON_KEY") {
+    showWarning(
+      "<strong>Supabase anon key が未設定です。</strong> " +
+      "<code>main.js</code> の <code>SUPABASE_ANON_KEY</code> を実値に書き換えてください " +
+      "(<code>firmware-esphome/secrets.yaml</code> の <code>supabase_anon_key</code> と同じ値)。"
+    );
+    return false;
+  }
+  sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: { persistSession: false },
+  });
+  return true;
+}
+
+function initChart() {
+  const ctx = document.getElementById("temp-chart").getContext("2d");
+
+  // 現在のテーマから色を引く
+  const ink       = getThemeColor("--ink");
+  const inkMuted  = getThemeColor("--ink-muted");
+  const bgCard    = getThemeColor("--bg-card");
+  const accentHot = getThemeColor("--accent-hot");
+
+  Chart.defaults.color = inkMuted;
+  Chart.defaults.borderColor = withAlpha(ink, 0.06);
+  Chart.defaults.font.family = '"Zen Maru Gothic", "Hiragino Maru Gothic ProN", sans-serif';
+
+  const datasets = CHANNELS.map((ch) => {
+    const color = getThemeColor(ch.varName);
+    return {
+      label: ch.display,
+      data: [],
+      borderColor: color,
+      backgroundColor: withAlpha(color, 0.10),
+      borderWidth: 2,
+      pointRadius: 0,
+      pointHoverRadius: 5,
+      pointHoverBorderWidth: 2,
+      pointHoverBackgroundColor: color,
+      pointHoverBorderColor: bgCard,
+      tension: 0.3,
+      spanGaps: true,
+      parsing: false, // {x, y} をそのまま使う
+    };
+  });
+
+  chart = new Chart(ctx, {
+    type: "line",
+    data: { datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      interaction: { mode: "nearest", intersect: false, axis: "x" },
+      plugins: {
+        legend: {
+          position: "top",
+          align: "end",
+          labels: {
+            boxWidth: 10,
+            boxHeight: 10,
+            usePointStyle: true,
+            padding: 16,
+            color: ink,
+            font: {
+              family: '"Zen Maru Gothic", sans-serif',
+              size: 12,
+              weight: 500,
+            },
+          },
+        },
+        tooltip: {
+          mode: "nearest",
+          intersect: false,
+          backgroundColor: withAlpha(getThemeColor("--bg-elevated"), 0.96),
+          borderColor: accentHot,
+          borderWidth: 1,
+          padding: 12,
+          titleColor: ink,
+          titleFont: {
+            family: '"Shippori Mincho B1", serif',
+            size: 13,
+            weight: 700,
+          },
+          bodyColor: ink,
+          bodyFont: {
+            family: '"Major Mono Display", monospace',
+            size: 12,
+          },
+          cornerRadius: 4,
+          displayColors: true,
+          boxWidth: 10,
+          boxHeight: 10,
+          usePointStyle: true,
+          callbacks: {
+            title: (items) => {
+              if (!items.length) return "";
+              const d = new Date(items[0].parsed.x);
+              return d.toLocaleTimeString("ja-JP", { hour12: false });
+            },
+            label: (item) => `${item.dataset.label}: ${item.parsed.y?.toFixed(1)} °C`,
+          },
+        },
+      },
+      scales: {
+        x: {
+          type: "time",
+          time: {
+            tooltipFormat: "HH:mm:ss",
+            displayFormats: { second: "HH:mm:ss", minute: "HH:mm", hour: "HH:mm" },
+          },
+          ticks: {
+            maxRotation: 0,
+            autoSkip: true,
+            autoSkipPadding: 16,
+            color: inkMuted,
+            font: {
+              family: '"Major Mono Display", monospace',
+              size: 11,
+            },
+          },
+          grid: { color: withAlpha(ink, 0.05), drawTicks: false },
+          border: { color: withAlpha(ink, 0.10) },
+        },
+        y: {
+          title: {
+            display: true,
+            text: "温度 ( °C )",
+            color: inkMuted,
+            font: {
+              family: '"Shippori Mincho B1", serif',
+              size: 12,
+              weight: 700,
+            },
+          },
+          ticks: {
+            color: inkMuted,
+            font: {
+              family: '"Major Mono Display", monospace',
+              size: 11,
+            },
+          },
+          grid: { color: withAlpha(ink, 0.05), drawTicks: false },
+          border: { color: withAlpha(ink, 0.10) },
+        },
+      },
+    },
+  });
+}
+
+// --------------------------- データ操作 ---------------------------
+
+// 全セッション横断で最新行 1 件を取得し、その session_id とライブ状態を判定する
+async function detectLatestSession() {
+  const { data, error } = await sb
+    .from(TABLE)
+    .select("session_id, measured_at")
+    .order("measured_at", { ascending: false })
+    .limit(1);
+
+  if (error) {
+    console.error("detectLatestSession error", error);
+    showWarning(`最新セッションの検出に失敗しました: <code>${error.message}</code>`);
+    return null;
+  }
+
+  if (!data || !data.length) return null;
+
+  const row = data[0];
+  const lag = Date.now() - new Date(row.measured_at).getTime();
+  let mode;
+  if (lag <= LIVE_THRESHOLD_MS)       mode = "live";
+  else if (lag <= STALE_LIVE_MS)      mode = "stale";
+  else                                mode = "offline";
+
+  return { sessionId: row.session_id, lastMeasured: row.measured_at, mode };
+}
+
+// セッション全期間の生データを一度だけ取得し fullSessionData に格納する。
+// 窓切替時は再 fetch せず、このキャッシュからフィルタしてチャートを描く。
+async function loadFullSession(sessionId) {
+  // sessionStartIso を since に、なければセッション全体取得、それも無理ならフォールバック (4時間前)
+  let start = sessionStartIso;
+  if (!start) {
+    try { start = await fetchSessionStart(sessionId); } catch (_) { start = null; }
+  }
+  if (start) sessionStartIso = start;
+  const since = start || new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString();
+
+  const { data, error } = await sb
+    .from(TABLE)
+    .select("measured_at, channel, temp_c, humidity_pct, pressure_hpa")
+    .eq("session_id", sessionId)
+    .gte("measured_at", since)
+    .order("measured_at", { ascending: false })  // ← DESC: 最新側から取得
+    .limit(50000);                                // ← max-rows=50000 と整合
+
+  if (error) {
+    console.error("loadFullSession error", error);
+    showWarning(`データ取得失敗: <code>${error.message}</code>`);
+    return;
+  }
+
+  // DESC で取ったデータを時系列順 (ASC) に並べ替えて詰める
+  const rows = (data || []).slice().reverse();
+
+  // キャッシュをリセットして詰め直す
+  fullSessionData = {
+    potato_internal: [],
+    potato_surface: [],
+    kiln_ambient: [],
+    stone_surface: [],
+    env: [],
+  };
+  latestEnvHumidity = null;
+  latestEnvPressure = null;
+
+  for (const row of rows) {
+    const ms = new Date(row.measured_at).valueOf();
+    if (fullSessionData[row.channel] !== undefined && typeof row.temp_c === "number") {
+      fullSessionData[row.channel].push({ x: ms, y: row.temp_c });
+    }
+    if (row.channel === "env") {
+      if (typeof row.humidity_pct === "number") latestEnvHumidity = row.humidity_pct;
+      if (typeof row.pressure_hpa === "number") latestEnvPressure = row.pressure_hpa;
+    }
+  }
+
+  // 増分取得用カーソルとセッション開始時刻を更新 (rows は ASC)
+  if (rows.length > 0) {
+    lastMeasuredAtIso = rows[rows.length - 1].measured_at;
+    if (!sessionStartIso) sessionStartIso = rows[0].measured_at;
+  }
+}
+
+// セッション全期間から最古の measured_at を取得し sessionStart として使う
+async function fetchSessionStart(sessionId) {
+  const { data, error } = await sb
+    .from(TABLE)
+    .select("measured_at")
+    .eq("session_id", sessionId)
+    .order("measured_at", { ascending: true })
+    .limit(1);
+  if (error) {
+    console.error("fetchSessionStart error", error);
+    return null;
+  }
+  if (!data || !data.length) return null;
+  return data[0].measured_at;
+}
+
+// 増分取得: 5秒毎に呼ばれる。新規行を fullSessionData に追記する。
+async function fetchIncrementalData(sessionId, afterIso) {
+  const { data, error } = await sb
+    .from(TABLE)
+    .select("measured_at, channel, temp_c, humidity_pct, pressure_hpa")
+    .eq("session_id", sessionId)
+    .gt("measured_at", afterIso)
+    .order("measured_at", { ascending: true })
+    .limit(2000);
+
+  if (error) {
+    console.error("fetchIncrementalData error", error);
+    return [];
+  }
+  if (!data || data.length === 0) return [];
+
+  for (const row of data) {
+    const ms = new Date(row.measured_at).valueOf();
+    if (fullSessionData[row.channel] !== undefined && typeof row.temp_c === "number") {
+      fullSessionData[row.channel].push({ x: ms, y: row.temp_c });
+    }
+    if (row.channel === "env") {
+      if (typeof row.humidity_pct === "number") latestEnvHumidity = row.humidity_pct;
+      if (typeof row.pressure_hpa === "number") latestEnvPressure = row.pressure_hpa;
+    }
+  }
+  return data;
+}
+
+// --------------------------- 描画 ---------------------------
+
+// fullSessionData から現窓に合うものだけフィルタしてチャートに反映する。
+// 窓切替時・増分追記時の両方から呼ばれる。Supabase へは行かない。
+function applyWindowToChart() {
+  if (!chart) return;
+  const preset = getCurrentPreset();
+  const now = Date.now();
+  const minMs = preset && preset.ms != null ? now - preset.ms : 0; // 全期間は 0 = すべて含む
+  for (let i = 0; i < CHANNELS.length; i++) {
+    const ch = CHANNELS[i];
+    const series = fullSessionData[ch.key] || [];
+    const filtered = minMs > 0 ? series.filter(p => p.x >= minMs) : series.slice();
+    chart.data.datasets[i].data = filtered;
+  }
+  chart.update("none");
+}
+
+// fullSessionData / latestEnv* から現在値カードを更新する
+function updateCurrentValuesFromCache() {
+  if (!$cards) return;
+  // 温度カード
+  for (const ch of CHANNELS) {
+    const series = fullSessionData[ch.key];
+    if (!series || series.length === 0) continue;
+    const latest = series[series.length - 1];
+    const card = $cards.querySelector(`[data-channel="${ch.key}"]`);
+    if (!card) continue;
+    const valueEl = card.querySelector(".card-number");
+    if (!valueEl) continue;
+    const next = latest.y.toFixed(1);
+    if (valueEl.textContent !== next) {
+      valueEl.textContent = next;
+      flashCard(card);
+    }
+    card.classList.remove("stale");
+  }
+  // 湿度・気圧カード
+  for (const m of EXTRA_METRICS) {
+    const card = $cards.querySelector(`[data-metric="${m.key}"]`);
+    if (!card) continue;
+    const valueEl = card.querySelector(".card-number");
+    if (!valueEl) continue;
+    let value = null;
+    if (m.key === "humidity") value = latestEnvHumidity;
+    else if (m.key === "pressure") value = latestEnvPressure;
+    if (typeof value !== "number") continue;
+    const next = value.toFixed(m.digits);
+    if (valueEl.textContent !== next) {
+      valueEl.textContent = next;
+      flashCard(card);
+    }
+    card.classList.remove("stale");
+  }
+}
+
+function flashCard(card) {
+  if (!card) return;
+  // 一度 class を外してから付けて再アニメーション
+  card.classList.remove("flash");
+  // Force reflow
+  void card.offsetWidth;
+  card.classList.add("flash");
+}
+
+function fmtElapsedJa(ms) {
+  if (!Number.isFinite(ms) || ms < 0) return "";
+  const total = Math.floor(ms / 1000);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  if (h > 0) return `${h}時間 ${m}分`;
+  return `${m}分`;
+}
+
+function fmtDateTimeJa(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// ライブ状態ヘッダの描画
+// state: { mode: "live"|"stale"|"offline", sessionId, sessionStart, lastMeasured }
+function updateLiveHeader(state) {
+  const mode = state && state.mode ? state.mode : "offline";
+  liveMode = mode;
+
+  // dot 色は class で切替
+  $liveStatusDot.classList.remove("live", "stale", "offline");
+  $liveStatusDot.classList.add(mode);
+
+  // ヘッダ全体のテーマ class
+  $liveHeader.classList.remove("mode-live", "mode-stale", "mode-offline");
+  $liveHeader.classList.add(`mode-${mode}`);
+
+  if (mode === "live") {
+    $liveStatusLabel.textContent = "ライブ中";
+    if (state.sessionStart) {
+      const elapsedMs = Date.now() - new Date(state.sessionStart).getTime();
+      $liveElapsed.textContent = `芋を焼き始めて ${fmtElapsedJa(elapsedMs)} 経過`;
+    } else {
+      $liveElapsed.textContent = "";
+    }
+  } else if (mode === "stale") {
+    $liveStatusLabel.textContent = "計測中 (一時遅延)";
+    if (state.sessionStart) {
+      const elapsedMs = Date.now() - new Date(state.sessionStart).getTime();
+      $liveElapsed.textContent = `焼き始めて ${fmtElapsedJa(elapsedMs)} 経過`;
+    } else {
+      $liveElapsed.textContent = "";
+    }
+  } else {
+    $liveStatusLabel.textContent = "オフライン";
+    if (state.lastMeasured) {
+      $liveElapsed.textContent = `最後の計測: ${fmtDateTimeJa(state.lastMeasured)}`;
+    } else {
+      $liveElapsed.textContent = "";
+    }
+  }
+}
+
+// 経過時間の毎秒更新 (live / stale モードのみ)
+function tickLiveHeader() {
+  if (!sessionStartIso) return;
+  if (liveMode === "live") {
+    const elapsedMs = Date.now() - new Date(sessionStartIso).getTime();
+    $liveElapsed.textContent = `芋を焼き始めて ${fmtElapsedJa(elapsedMs)} 経過`;
+  } else if (liveMode === "stale") {
+    const elapsedMs = Date.now() - new Date(sessionStartIso).getTime();
+    $liveElapsed.textContent = `焼き始めて ${fmtElapsedJa(elapsedMs)} 経過`;
+  }
+}
+
+function markUpdated(when) {
+  const d = when ? new Date(when) : new Date();
+  $updated.textContent = d.toLocaleTimeString("ja-JP", { hour12: false });
+  // staleness 判定: lastMeasuredAt が古ければ live インジケータを warn 化
+  if (lastMeasuredAtIso) {
+    const lag = Date.now() - new Date(lastMeasuredAtIso).getTime();
+    $liveIndicator.classList.toggle("stale", lag > STALE_THRESHOLD_MS);
+  }
+}
+
+// --------------------------- セッションロード ---------------------------
+async function loadSession(sessionId) {
+  if (!sessionId) return;
+  currentSession = sessionId;
+  sessionStartIso = null;
+  lastMeasuredAtIso = null;
+
+  // キャッシュもリセット
+  fullSessionData = {
+    potato_internal: [],
+    potato_surface: [],
+    kiln_ambient: [],
+    stone_surface: [],
+    env: [],
+  };
+  latestEnvHumidity = null;
+  latestEnvPressure = null;
+
+  // 既存のチャート点をクリア
+  for (const ds of chart.data.datasets) ds.data = [];
+  chart.update("none");
+
+  // 現在値カードもリセット (温度 + 湿度・気圧)
+  for (const ch of CHANNELS) {
+    const card = $cards.querySelector(`[data-channel="${ch.key}"]`);
+    if (card) {
+      card.classList.add("stale");
+      const v = card.querySelector(".card-number");
+      if (v) v.textContent = "--";
+    }
+  }
+  for (const m of EXTRA_METRICS) {
+    const card = $cards.querySelector(`[data-metric="${m.key}"]`);
+    if (card) {
+      card.classList.add("stale");
+      const v = card.querySelector(".card-number");
+      if (v) v.textContent = "--";
+    }
+  }
+
+  // セッション開始時刻を先に確定 (loadFullSession の since として使う)
+  try {
+    const realStart = await fetchSessionStart(sessionId);
+    if (realStart) sessionStartIso = realStart;
+  } catch (_) {}
+
+  // 全期間データを一度に取得してキャッシュに格納
+  await loadFullSession(sessionId);
+
+  // 現窓に合わせてチャート描画 + カード更新
+  applyWindowToChart();
+  updateCurrentValuesFromCache();
+  markUpdated();
+}
+
+// --------------------------- メインループ ---------------------------
+async function refreshTick() {
+  if (!currentSession) return;
+
+  if (!lastMeasuredAtIso) {
+    // 初期データが空のままだった場合は、再度全期間取得を試みる
+    await loadFullSession(currentSession);
+    applyWindowToChart();
+    updateCurrentValuesFromCache();
+    markUpdated();
+    refreshLiveState();
+    updateChartRange();
+    return;
+  }
+
+  const rows = await fetchIncrementalData(currentSession, lastMeasuredAtIso);
+  if (rows.length) {
+    lastMeasuredAtIso = rows[rows.length - 1].measured_at;
+    // キャッシュには既に追記済 (fetchIncrementalData 内で実施)
+    applyWindowToChart();
+    updateCurrentValuesFromCache();
+  } else {
+    // 新規データなしでも、窓は時間とともに進む — フィルタを再適用して窓外を切り捨てる
+    applyWindowToChart();
+  }
+  markUpdated();
+  refreshLiveState();
+  updateChartRange();
+}
+
+// 現在のセッションの最終 measured_at を見て live/stale/offline を再判定
+function refreshLiveState() {
+  if (!lastMeasuredAtIso) return;
+  const lag = Date.now() - new Date(lastMeasuredAtIso).getTime();
+  let mode;
+  if (lag <= LIVE_THRESHOLD_MS)  mode = "live";
+  else if (lag <= STALE_LIVE_MS) mode = "stale";
+  else                           mode = "offline";
+
+  updateLiveHeader({
+    mode,
+    sessionId: currentSession,
+    sessionStart: sessionStartIso,
+    lastMeasured: lastMeasuredAtIso,
+  });
+
+  // offline に落ちたらポーリングを停止
+  if (mode === "offline" && refreshTimer) {
+    clearInterval(refreshTimer);
+    refreshTimer = null;
+  }
+}
+
+// --------------------------- 起動 ---------------------------
+async function bootstrap() {
+  initTheme();
+  initWindowKey();
+  loadHiddenChannels();
+  renderScaleToggle();
+  applyBrandName();
+  buildCards();
+
+  // テーマ切替ボタン
+  if ($themeToggle) {
+    $themeToggle.addEventListener("click", toggleTheme);
+  }
+
+  // 温度カード: click / Enter / Space でグラフ系列を toggle (event delegation)
+  // 湿度・気圧カードは data-channel を持たないので自動的にスキップされる
+  if ($cards) {
+    $cards.addEventListener("click", (e) => {
+      const card = e.target.closest("[data-channel]");
+      if (!card) return;
+      toggleChannelVisibility(card.dataset.channel);
+    });
+    $cards.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      const card = e.target.closest("[data-channel]");
+      if (!card) return;
+      e.preventDefault();
+      toggleChannelVisibility(card.dataset.channel);
+    });
+  }
+
+  if (!initSupabase()) return;
+
+  initChart();
+
+  // チャート/カードに復元された hidden 状態を反映 (initChart 直後ゆえ datasets はある)
+  applyChannelVisibility();
+
+  // URL パラメータで session を強制指定可能 (隠し機能)
+  const urlParams = new URLSearchParams(window.location.search);
+  const forcedSessionId = urlParams.get("session");
+
+  let initialState;
+  if (forcedSessionId) {
+    // 強制指定: そのセッションの最新行を取りに行ってモード判定
+    const { data, error } = await sb
+      .from(TABLE)
+      .select("measured_at")
+      .eq("session_id", forcedSessionId)
+      .order("measured_at", { ascending: false })
+      .limit(1);
+    if (error) {
+      showWarning(`指定セッションの検出に失敗しました: <code>${error.message}</code>`);
+      return;
+    }
+    if (!data || !data.length) {
+      showWarning(`指定セッション <code>${forcedSessionId}</code> のデータが見つかりません。`);
+      return;
+    }
+    const lastMeasured = data[0].measured_at;
+    const lag = Date.now() - new Date(lastMeasured).getTime();
+    let mode;
+    if (lag <= LIVE_THRESHOLD_MS)  mode = "live";
+    else if (lag <= STALE_LIVE_MS) mode = "stale";
+    else                           mode = "offline";
+    initialState = { sessionId: forcedSessionId, lastMeasured, mode };
+  } else {
+    // 自動検出
+    initialState = await detectLatestSession();
+  }
+
+  if (!initialState) {
+    showWarning("<code>yakiimo_temp_logs</code> にデータが見つかりませんでした。ESP32 が稼働しているか、anon key と RLS の SELECT 権限を確認してください。");
+    updateLiveHeader({ mode: "offline" });
+    return;
+  }
+
+  await loadSession(initialState.sessionId);
+
+  // 永続化された hidden 状態をチャート/カードに改めて反映
+  // (loadSession 内で chart.data.datasets が再構築/更新されるため、ここで再適用しておく)
+  applyChannelVisibility();
+
+  // チャートの x 軸範囲を現在の preset に合わせて確定する
+  updateChartRange();
+
+  // ライブ状態ヘッダを初期描画
+  updateLiveHeader({
+    mode: initialState.mode,
+    sessionId: initialState.sessionId,
+    sessionStart: sessionStartIso,
+    lastMeasured: lastMeasuredAtIso || initialState.lastMeasured,
+  });
+
+  // 自動更新ループ (offline モードならポーリング無し)
+  if (initialState.mode !== "offline") {
+    refreshTimer = setInterval(refreshTick, REFRESH_INTERVAL_MS);
+  }
+  // ヘッダの経過時間表示は毎秒
+  elapsedTimer = setInterval(tickLiveHeader, 1000);
+  tickLiveHeader();
+}
+
+// DOMContentLoaded 後 / すでに読込済みなら即時
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", bootstrap);
+} else {
+  bootstrap();
+}

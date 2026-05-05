@@ -1,0 +1,40 @@
+# secrets (never commit)
+firmware-esphome/secrets.yaml
+firmware-platformio-archive/include/secrets.h
+firmware/include/secrets.h
+dashboard/main.js
+
+# ESPHome build artifacts
+firmware-esphome/.esphome/
+firmware-esphome/.pioenvs/
+
+# PlatformIO build artifacts (legacy)
+firmware-platformio-archive/.pio/
+firmware-platformio-archive/.pioenvs/
+firmware-platformio-archive/.piolibdeps/
+firmware-platformio-archive/.vscode/
+firmware/.pio/
+firmware/.pioenvs/
+firmware/.piolibdeps/
+firmware/.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs / 一時ファイル
+*.log
+data/
+*.csv
+
+# Cloudflare Wrangler ローカルキャッシュ (refresh token 含む)
+.wrangler/
+
+# 検証用スクリーンショット (内部LAN IP 含む、公開不要)
+*.png
+
+# Playwright CLI のローカルキャッシュ
+.playwright-cli/
+
+# Supabase CLI キャッシュ
+supabase/.temp/

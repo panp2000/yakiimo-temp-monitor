@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>[屋号] やきいもリアルタイム温度モニター</title>
+
+  <!-- Google Fonts: Shippori Mincho B1 (display), Zen Maru Gothic (body), Major Mono Display (data) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    rel="stylesheet"
+    href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@400;700;800&family=Zen+Maru+Gothic:wght@400;500;700&family=Major+Mono+Display&display=swap"
+  />
+
+  <link rel="stylesheet" href="style.css" />
+
+  <!-- FOUC を防ぐため、CSS 評価前に data-theme を確定する -->
+  <script>
+    (function () {
+      try {
+        var stored = localStorage.getItem("yakiimo-theme");
+        var prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+        var initial = stored || (prefersDark ? "dark" : "light");
+        document.documentElement.setAttribute("data-theme", initial);
+      } catch (_) {
+        document.documentElement.setAttribute("data-theme", "light");
+      }
+    })();
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">焼</span>
+      <h1 class="brand-title">[屋号] やきいもリアルタイム温度モニター</h1>
+    </div>
+    <div class="topbar-right">
+      <div class="live-header" id="live-header" aria-label="ライブ状態">
+        <span class="status-dot" id="live-status-dot"></span>
+        <div class="status-text">
+          <span class="status-label" id="live-status-label">読込中...</span>
+          <span class="status-elapsed" id="live-elapsed"></span>
+        </div>
+        <span class="live-indicator" id="live-indicator" title="自動更新中">
+          <span class="updated" id="updated">--:--:--</span>
+        </span>
+      </div>
+      <button id="theme-toggle" class="theme-toggle" type="button" aria-label="ライト/ダークの切替" title="ライト/ダークの切替">
+        <!-- light テーマ表示中 = 太陽アイコン -->
+        <svg class="theme-toggle-icon" data-theme-icon="light" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="4"></circle>
+          <line x1="12" y1="2"  x2="12" y2="4"></line>
+          <line x1="12" y1="20" x2="12" y2="22"></line>
+          <line x1="2"  y1="12" x2="4"  y2="12"></line>
+          <line x1="20" y1="12" x2="22" y2="12"></line>
+          <line x1="4.93"  y1="4.93"  x2="6.34"  y2="6.34"></line>
+          <line x1="17.66" y1="17.66" x2="19.07" y2="19.07"></line>
+          <line x1="4.93"  y1="19.07" x2="6.34"  y2="17.66"></line>
+          <line x1="17.66" y1="6.34"  x2="19.07" y2="4.93"></line>
+        </svg>
+        <!-- dark テーマ表示中 = 三日月アイコン -->
+        <svg class="theme-toggle-icon" data-theme-icon="dark" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79z"></path>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <main>
+    <section class="chart-wrap" aria-label="温度推移グラフ">
+      <div class="scale-toggle" id="scale-toggle" role="group" aria-label="表示する時間範囲"></div>
+      <div class="chart-frame">
+        <canvas id="temp-chart"></canvas>
+      </div>
+    </section>
+
+    <section class="cards" id="current-cards" aria-label="現在の計測値">
+      <!-- JS で生成 -->
+    </section>
+
+    <div id="warning-banner" class="warning hidden" role="alert"></div>
+  </main>
+
+  <footer class="footer">
+    <p class="seal" aria-hidden="true">焼 芋 計 測</p>
+    <p class="meta">5チャネル × 5秒間隔 ・ ESP32 → Supabase → Cloudflare Pages</p>
+  </footer>
+
+  <!-- 外部ライブラリ (HTTPS, CDN 経由) -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+  <script src="main.js"></script>
+</body>
+</html>

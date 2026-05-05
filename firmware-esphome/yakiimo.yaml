@@ -1,0 +1,281 @@
+# yakiimo-temp-monitor / ESPHome configuration
+#
+# 役割:
+#   ESP32-DevKitC-32E + MAX31855 ×4 + BME280 ×1 で
+#   全 5ch を 5秒/サンプル統一でサンプリングし、5秒毎に 5行 batch POST で
+#   Supabase REST API へ送信する (2026-05-04 簡素化: バッファ・swap・キュー撤廃)。
+#
+# 旧 PlatformIO 実装(firmware-platformio-archive/src/main.cpp 370行)を ESPHome に置換。
+# ESPHome 標準コンポーネントの採用で、自前 main.cpp の致命的問題(NTP 未同期で 1970 行
+# 流入・WiFi ブロッキング・flush ループでサンプル欠測 等)はすべて解消される。
+#
+# 書き込み手順:
+#   cd firmware-esphome
+#   cp secrets.yaml.example secrets.yaml   # 実値を埋める
+#   esphome run yakiimo.yaml               # 初回 USB、以降 OTA で再書き込み可
+#
+# Web UI: http://yakiimo-temp-monitor.local/  (mDNS)
+
+substitutions:
+  device_id: "esp32-01"
+  # lambda 内で参照するため substitutions に置く(!secret は lambda から直接参照できないため)
+  supabase_url: !secret supabase_url
+  supabase_anon_key: !secret supabase_anon_key
+  # 屋号 (店名)。Web UI / friendly_name に表示する
+  brand_name: !secret brand_name
+
+esphome:
+  name: yakiimo-temp-monitor
+  friendly_name: ${brand_name} やきいもリアルタイム温度モニター
+  comment: "ESP32 + MAX31855x4 + BME280, 0.2Hz unified sampling to Supabase"
+  project:
+    name: "mycompany.yakiimo-temp-monitor"
+    version: "0.2.0-esphome"
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+logger:
+  level: DEBUG
+  baud_rate: 115200
+
+# --- WiFi ---
+# 複数ネットワーク登録 (家庭 + テザリング)。起動時にスキャンして利用可能なものへ自動接続。
+# fast_connect: false が必須 (true だと最初の成功 SSID をキャッシュして他をスキャンしない)。
+wifi:
+  networks:
+    - ssid: !secret wifi_ssid_home
+      password: !secret wifi_password_home
+    - ssid: !secret wifi_ssid_tether
+      password: !secret wifi_password_tether
+  fast_connect: false
+  # 接続失敗時は AP モードへフォールバック → captive portal で再設定
+  ap:
+    ssid: "Yakiimo Fallback"
+    password: !secret fallback_password
+  reboot_timeout: 0s   # WiFi 切断で再起動しない(計測継続を優先)
+
+captive_portal:
+
+# --- mDNS / Web UI ---
+web_server:
+  port: 80
+  version: 3
+  auth:
+    username: !secret web_username
+    password: !secret web_password
+  # 標準で全 sensor をリアルタイム表示。オーナーがブラウザで目視確認に使う
+
+# --- OTA ---
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+# --- 時刻同期 ---
+time:
+  - platform: sntp
+    id: sntp_time
+    timezone: UTC
+    servers:
+      - pool.ntp.org
+      - time.google.com
+      - time.cloudflare.com
+
+# --- バス ---
+spi:
+  clk_pin: GPIO18
+  miso_pin: GPIO19
+  # MAX31855 は 4 枚で SCK/MISO 共有、CS のみ個別
+
+i2c:
+  # BME280 を 3V3 側 (J2 列) に物理配置するため、I2C ピンも 3V3 側 GPIO32/33 を使用
+  sda: GPIO32
+  scl: GPIO33
+  scan: true
+  frequency: 100kHz
+
+# --- HTTP クライアント ---
+http_request:
+  id: supabase_http
+  timeout: 10s
+  verify_ssl: false   # 当初は無効化。CA 固定は後追い改善(docs/esphome-setup.md 参照)
+  useragent: "yakiimo-temp-monitor/0.2-esphome"
+
+# --- センサー ---
+sensor:
+  # ===== 熱電対 ×4 (MAX31855) =====
+  - platform: max31855
+    name: "Potato Internal"
+    id: potato_internal
+    cs_pin: GPIO5
+    update_interval: 5s   # 全ch 5s 統一 (2026-05-04)
+    reference_temperature:
+      name: "Potato Internal Cold-Junction"
+      id: potato_internal_cj
+      internal: true   # cold-junction 値は web UI に出さない(ノイズになるので)
+
+  - platform: max31855
+    name: "Potato Surface"
+    id: potato_surface
+    cs_pin: GPIO15
+    update_interval: 5s   # 全ch 5s 統一 (2026-05-04)
+    reference_temperature:
+      name: "Potato Surface Cold-Junction"
+      id: potato_surface_cj
+      internal: true
+
+  - platform: max31855
+    name: "Kiln Ambient"
+    id: kiln_ambient
+    cs_pin: GPIO26
+    update_interval: 5s   # 全ch 5s 統一 (2026-05-04)
+    reference_temperature:
+      name: "Kiln Ambient Cold-Junction"
+      id: kiln_ambient_cj
+      internal: true
+
+  - platform: max31855
+    name: "Stone Surface"
+    id: stone_surface
+    cs_pin: GPIO27
+    update_interval: 5s   # 全ch 5s 統一 (2026-05-04)
+    reference_temperature:
+      name: "Stone Surface Cold-Junction"
+      id: stone_surface_cj
+      internal: true
+
+  # ===== 環境センサー (BME280) =====
+  - platform: bme280_i2c
+    address: 0x76          # SDO=GND を第一候補。SDO=3.3V なら 0x77 に変える
+    update_interval: 5s    # 全ch 5s 統一 (2026-05-04)
+    temperature:
+      name: "Env Temperature"
+      id: env_temp
+    humidity:
+      name: "Env Humidity"
+      id: env_humid
+    pressure:
+      name: "Env Pressure"
+      id: env_press
+
+  # ===== WiFi 信号強度(60秒毎、デバッグ用) =====
+  - platform: wifi_signal
+    name: "WiFi RSSI"
+    id: wifi_rssi
+    update_interval: 60s
+
+# --- WiFi 接続情報 (テザリング切替時の確認用) ---
+# Web UI に表示し、現在どの SSID / IP で繋がっているかを目視できるようにする。
+# mDNS が効かぬ環境 (iOS テザリング等) では IP 直打ちで Web UI へアクセスする際に必要。
+text_sensor:
+  - platform: wifi_info
+    ssid:
+      name: "接続中のSSID"
+      id: wifi_ssid_text
+    ip_address:
+      name: "IP アドレス"
+      id: wifi_ip_text
+
+# --- 動的セッション ID (Web UI から変更可、NVS 永続化) ---
+# initial_value で起動時の初期値を secrets.yaml から読み、Web UI で変更すると
+# restore_value: true により NVS に保存され再起動後も維持される。
+text:
+  - platform: template
+    name: "セッションID"
+    id: session_id_var
+    icon: mdi:tag
+    mode: text
+    optimistic: true
+    initial_value: !secret session_id
+    restore_value: true
+    min_length: 1
+    max_length: 64
+
+# --- バッチ POST スクリプト ---
+# 5s 毎に lambda で 5ch の state を読み、JSON 配列 (5行同一キー) を組み立てて
+# Supabase REST API へ 1 回 POST する。mode: single なので走行中の重複呼び出しは
+# drop され、その 5 秒分のデータは欠測として許容する (頻度低いので問題なし)。
+script:
+  - id: post_batch
+    mode: single
+    then:
+      - http_request.post:
+          url: !lambda |-
+            return std::string("${supabase_url}") + "/rest/v1/yakiimo_temp_logs";
+          request_headers:
+            Content-Type: application/json
+            apikey: !secret supabase_anon_key
+            Authorization: "Bearer ${supabase_anon_key}"
+            Prefer: return=minimal
+          body: !lambda |-
+            // 全 5ch 共通の measured_at (POST 構築時刻、5秒に1回ゆえ十分整合)
+            auto t = id(sntp_time).now();
+            char ts[32];
+            snprintf(ts, sizeof(ts), "%04d-%02d-%02dT%02d:%02d:%02dZ",
+                     t.year, t.month, t.day_of_month,
+                     t.hour, t.minute, t.second);
+
+            // NaN 安全な数値整形
+            auto fmt = [](float v) -> std::string {
+              if (isnan(v)) return std::string("null");
+              char buf[32];
+              snprintf(buf, sizeof(buf), "%.3f", v);
+              return std::string(buf);
+            };
+
+            // 4 熱電対 + env を 5行配列で構築 (キー集合は全行で統一)
+            std::string body = std::string("[");
+            const char* tc_ch[4] = {"potato_internal", "potato_surface", "kiln_ambient", "stone_surface"};
+            float tc_v[4] = {
+              id(potato_internal).state,
+              id(potato_surface).state,
+              id(kiln_ambient).state,
+              id(stone_surface).state
+            };
+            for (int i = 0; i < 4; i++) {
+              if (i > 0) body += ",";
+              body += "{\"device_id\":\"${device_id}\",";
+              body += "\"session_id\":\"" + id(session_id_var).state + "\",";
+              body += "\"measured_at\":\"" + std::string(ts) + "\",";
+              body += "\"channel\":\"" + std::string(tc_ch[i]) + "\",";
+              body += "\"temp_c\":" + fmt(tc_v[i]) + ",";
+              body += "\"humidity_pct\":null,\"pressure_hpa\":null}";
+            }
+            // env 行 (humidity_pct, pressure_hpa 込み)
+            body += ",{\"device_id\":\"${device_id}\",";
+            body += "\"session_id\":\"" + id(session_id_var).state + "\",";
+            body += "\"measured_at\":\"" + std::string(ts) + "\",";
+            body += "\"channel\":\"env\",";
+            body += "\"temp_c\":" + fmt(id(env_temp).state) + ",";
+            body += "\"humidity_pct\":" + fmt(id(env_humid).state) + ",";
+            body += "\"pressure_hpa\":" + fmt(id(env_press).state) + "}";
+            body += "]";
+            return body;
+          on_response:
+            then:
+              - lambda: |-
+                  if (response->status_code >= 200 && response->status_code < 300) {
+                    ESP_LOGI("yakiimo", "batch POST OK (5 rows)");
+                  } else {
+                    ESP_LOGW("yakiimo", "batch POST failed status=%d", response->status_code);
+                  }
+          capture_response: false
+
+# --- 定期トリガー ---
+interval:
+  # 5秒毎: 全 5ch の state を読んで一括 POST
+  - interval: 5s
+    then:
+      - if:
+          condition:
+            lambda: 'return id(sntp_time).now().is_valid();'
+          then:
+            - script.execute: post_batch
+
+  # 60秒毎: WiFi RSSI ログ
+  - interval: 60s
+    then:
+      - lambda: |-
+          ESP_LOGD("yakiimo", "WiFi RSSI: %.0f dBm", id(wifi_rssi).state);

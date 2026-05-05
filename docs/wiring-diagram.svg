@@ -1,0 +1,257 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-200 0 1600 1000" font-family="Helvetica, Arial, sans-serif">
+  <!-- やきいも温度計 配線図 (FB Live 視聴者向け) -->
+
+  <defs>
+    <style>
+      .title  { font-size: 36px; font-weight: bold; fill: #222; }
+      .subt   { font-size: 18px; fill: #555; }
+      .modlbl { font-size: 22px; font-weight: bold; fill: #fff; }
+      .pinlbl { font-size: 16px; fill: #fff; font-family: 'Menlo', monospace; }
+      .pinlbl-d { font-size: 16px; fill: #222; font-family: 'Menlo', monospace; }
+      .role   { font-size: 18px; fill: #d04000; font-weight: bold; }
+      .legend { font-size: 16px; fill: #222; }
+      .lbl    { font-size: 14px; fill: #222; }
+    </style>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#444"/>
+    </marker>
+  </defs>
+
+  <!-- 背景 -->
+  <rect x="-200" y="0" width="1600" height="1000" fill="#fafaf6"/>
+
+  <!-- タイトル -->
+  <text class="title" x="40" y="55">🍠 やきいも温度計 配線図</text>
+  <text class="subt"  x="40" y="85">ESP32-WROOM-32E + MAX31855 ×4 + BME280 / 5チャンネル / 1秒サンプリング</text>
+
+  <!-- 凡例 (右上) -->
+  <g transform="translate(920, 35)">
+    <rect x="0" y="0" width="450" height="180" fill="#fff" stroke="#bbb" stroke-width="1" rx="6"/>
+    <text class="legend" x="14" y="24" font-weight="bold">配線の色分け</text>
+
+    <line x1="14" y1="46"  x2="60" y2="46"  stroke="#e22"  stroke-width="6"/>
+    <text class="legend" x="70" y="51">3.3V (赤)</text>
+
+    <line x1="14" y1="72"  x2="60" y2="72"  stroke="#222"  stroke-width="6"/>
+    <text class="legend" x="70" y="77">GND (黒)</text>
+
+    <line x1="14" y1="98"  x2="60" y2="98"  stroke="#1a64d8" stroke-width="6"/>
+    <text class="legend" x="70" y="103">SPI 共有 SCK/MISO (青)</text>
+
+    <line x1="14" y1="124" x2="60" y2="124" stroke="#ff8800" stroke-width="6"/>
+    <text class="legend" x="70" y="129">CS線 ×4 (橙、各MAX31855で別個)</text>
+
+    <line x1="14" y1="150" x2="60" y2="150" stroke="#1d8a3a" stroke-width="6"/>
+    <text class="legend" x="70" y="155">I2C SDA/SCL (緑)</text>
+  </g>
+
+  <!-- ESP32 モジュール (左中央) -->
+  <g transform="translate(80, 230)">
+    <rect x="0" y="0" width="280" height="640" fill="#202840" rx="14"/>
+    <text class="modlbl" x="140" y="38" text-anchor="middle">ESP32-WROOM-32E</text>
+
+    <!-- ピン (右側に並ぶ) -->
+    <g transform="translate(0, 80)">
+      <!-- 3.3V -->
+      <rect x="200" y="0"   width="80" height="40" fill="#e22"/>
+      <text class="pinlbl" x="240" y="26" text-anchor="middle">3.3V</text>
+
+      <!-- GND -->
+      <rect x="200" y="50"  width="80" height="40" fill="#000"/>
+      <text class="pinlbl" x="240" y="76" text-anchor="middle">GND</text>
+
+      <!-- SCK -->
+      <rect x="200" y="110" width="80" height="40" fill="#1a64d8"/>
+      <text class="pinlbl" x="240" y="136" text-anchor="middle">GPIO18 SCK</text>
+
+      <!-- MISO -->
+      <rect x="200" y="160" width="80" height="40" fill="#1a64d8"/>
+      <text class="pinlbl" x="240" y="186" text-anchor="middle">GPIO19 MISO</text>
+
+      <!-- CS0 -->
+      <rect x="200" y="220" width="80" height="40" fill="#ff8800"/>
+      <text class="pinlbl" x="240" y="246" text-anchor="middle">GPIO5 CS0</text>
+
+      <!-- CS1 -->
+      <rect x="200" y="270" width="80" height="40" fill="#ffaa33"/>
+      <text class="pinlbl" x="240" y="296" text-anchor="middle">GPIO15 CS1</text>
+
+      <!-- CS2 -->
+      <rect x="200" y="320" width="80" height="40" fill="#ff7711"/>
+      <text class="pinlbl" x="240" y="346" text-anchor="middle">GPIO26 CS2</text>
+
+      <!-- CS3 -->
+      <rect x="200" y="370" width="80" height="40" fill="#ff5500"/>
+      <text class="pinlbl" x="240" y="396" text-anchor="middle">GPIO27 CS3</text>
+
+      <!-- ===== ESP32 左側 (3V3 側 / J2 列) のピン: BME280 用 I2C ===== -->
+      <!-- SDA (GPIO32) -->
+      <rect x="-80" y="430" width="80" height="40" fill="#1d8a3a"/>
+      <text class="pinlbl" x="-40" y="456" text-anchor="middle">GPIO32 SDA</text>
+
+      <!-- SCL (GPIO33) -->
+      <rect x="-80" y="480" width="80" height="40" fill="#1d8a3a"/>
+      <text class="pinlbl" x="-40" y="506" text-anchor="middle">GPIO33 SCL</text>
+    </g>
+  </g>
+
+  <!-- MAX31855 #0 (potato_internal) -->
+  <g transform="translate(700, 200)">
+    <rect x="0" y="0" width="320" height="100" fill="#5a2d82" rx="8"/>
+    <text class="modlbl" x="160" y="32" text-anchor="middle">MAX31855 #0</text>
+    <text class="role"   x="160" y="58" text-anchor="middle" fill="#ffd28a">CH0 → やきいも内部</text>
+    <text class="lbl"    x="160" y="80" text-anchor="middle" fill="#fff">CS=GPIO5 / 3.3V / GND / SCK / MISO / T+ / T-</text>
+  </g>
+
+  <!-- MAX31855 #1 (potato_surface) -->
+  <g transform="translate(700, 320)">
+    <rect x="0" y="0" width="320" height="100" fill="#5a2d82" rx="8"/>
+    <text class="modlbl" x="160" y="32" text-anchor="middle">MAX31855 #1</text>
+    <text class="role"   x="160" y="58" text-anchor="middle" fill="#ffd28a">CH1 → やきいも表面</text>
+    <text class="lbl"    x="160" y="80" text-anchor="middle" fill="#fff">CS=GPIO15 / 3.3V / GND / SCK / MISO / T+ / T-</text>
+  </g>
+
+  <!-- MAX31855 #2 (kiln_ambient) -->
+  <g transform="translate(700, 440)">
+    <rect x="0" y="0" width="320" height="100" fill="#5a2d82" rx="8"/>
+    <text class="modlbl" x="160" y="32" text-anchor="middle">MAX31855 #2</text>
+    <text class="role"   x="160" y="58" text-anchor="middle" fill="#ffd28a">CH2 → 釜の雰囲気温度</text>
+    <text class="lbl"    x="160" y="80" text-anchor="middle" fill="#fff">CS=GPIO26 / 3.3V / GND / SCK / MISO / T+ / T-</text>
+  </g>
+
+  <!-- MAX31855 #3 (stone_surface) -->
+  <g transform="translate(700, 560)">
+    <rect x="0" y="0" width="320" height="100" fill="#5a2d82" rx="8"/>
+    <text class="modlbl" x="160" y="32" text-anchor="middle">MAX31855 #3</text>
+    <text class="role"   x="160" y="58" text-anchor="middle" fill="#ffd28a">CH3 → 石の表面</text>
+    <text class="lbl"    x="160" y="80" text-anchor="middle" fill="#fff">CS=GPIO27 / 3.3V / GND / SCK / MISO / T+ / T-</text>
+  </g>
+
+  <!-- BME280 (ESP32 左側 = 3V3 側 / J2 列に物理配置) -->
+  <g transform="translate(-180, 830)">
+    <rect x="0" y="0" width="300" height="100" fill="#1d8a3a" rx="8"/>
+    <text class="modlbl" x="150" y="32" text-anchor="middle">BME280 (I2C)</text>
+    <text class="role"   x="150" y="58" text-anchor="middle" fill="#e6ffea">env → 気温・湿度・気圧</text>
+    <text class="lbl"    x="150" y="80" text-anchor="middle" fill="#fff">VCC=3.3V / GND / SDA / SCL  (ADDR=0x76 or 0x77)</text>
+  </g>
+
+  <!-- 配線 (ESP32右ピン → 各モジュール左) -->
+  <!-- 3.3V を共通バスへ (上のレール、MAX31855 ×4 用) -->
+  <line x1="360" y1="330" x2="660" y2="330" stroke="#e22" stroke-width="5" stroke-linecap="round"/>
+  <line x1="660" y1="120" x2="660" y2="660" stroke="#e22" stroke-width="5" stroke-linecap="round"/>
+  <line x1="660" y1="240" x2="700" y2="240" stroke="#e22" stroke-width="5"/>
+  <line x1="660" y1="360" x2="700" y2="360" stroke="#e22" stroke-width="5"/>
+  <line x1="660" y1="480" x2="700" y2="480" stroke="#e22" stroke-width="5"/>
+  <line x1="660" y1="600" x2="700" y2="600" stroke="#e22" stroke-width="5"/>
+
+  <!-- GND を共通バスへ (MAX31855 ×4 用) -->
+  <line x1="360" y1="380" x2="640" y2="380" stroke="#000" stroke-width="5" stroke-linecap="round"/>
+  <line x1="640" y1="140" x2="640" y2="680" stroke="#000" stroke-width="5" stroke-linecap="round"/>
+  <line x1="640" y1="260" x2="700" y2="260" stroke="#000" stroke-width="5"/>
+  <line x1="640" y1="380" x2="700" y2="380" stroke="#000" stroke-width="5"/>
+  <line x1="640" y1="500" x2="700" y2="500" stroke="#000" stroke-width="5"/>
+  <line x1="640" y1="620" x2="700" y2="620" stroke="#000" stroke-width="5"/>
+
+  <!-- SCK 共有バス -->
+  <line x1="360" y1="440" x2="620" y2="440" stroke="#1a64d8" stroke-width="5" stroke-linecap="round"/>
+  <line x1="620" y1="200" x2="620" y2="660" stroke="#1a64d8" stroke-width="5" stroke-linecap="round"/>
+  <line x1="620" y1="280" x2="700" y2="280" stroke="#1a64d8" stroke-width="5"/>
+  <line x1="620" y1="400" x2="700" y2="400" stroke="#1a64d8" stroke-width="5"/>
+  <line x1="620" y1="520" x2="700" y2="520" stroke="#1a64d8" stroke-width="5"/>
+  <line x1="620" y1="640" x2="700" y2="640" stroke="#1a64d8" stroke-width="5"/>
+
+  <!-- MISO 共有バス -->
+  <line x1="360" y1="490" x2="600" y2="490" stroke="#1a64d8" stroke-width="5" stroke-linecap="round"/>
+  <line x1="600" y1="220" x2="600" y2="680" stroke="#1a64d8" stroke-width="5" stroke-linecap="round"/>
+  <line x1="600" y1="220" x2="700" y2="220" stroke="#1a64d8" stroke-width="5"/>
+  <line x1="600" y1="340" x2="700" y2="340" stroke="#1a64d8" stroke-width="5"/>
+  <line x1="600" y1="460" x2="700" y2="460" stroke="#1a64d8" stroke-width="5"/>
+  <line x1="600" y1="580" x2="700" y2="580" stroke="#1a64d8" stroke-width="5"/>
+
+  <!-- CS0 (GPIO5 → MAX31855#0) -->
+  <line x1="360" y1="550" x2="500" y2="550" stroke="#ff8800" stroke-width="5" stroke-linecap="round"/>
+  <line x1="500" y1="550" x2="500" y2="250" stroke="#ff8800" stroke-width="5"/>
+  <line x1="500" y1="250" x2="700" y2="250" stroke="#ff8800" stroke-width="5"/>
+
+  <!-- CS1 (GPIO15 → MAX31855#1) -->
+  <line x1="360" y1="600" x2="520" y2="600" stroke="#ffaa33" stroke-width="5" stroke-linecap="round"/>
+  <line x1="520" y1="600" x2="520" y2="370" stroke="#ffaa33" stroke-width="5"/>
+  <line x1="520" y1="370" x2="700" y2="370" stroke="#ffaa33" stroke-width="5"/>
+
+  <!-- CS2 (GPIO26 → MAX31855#2) -->
+  <line x1="360" y1="650" x2="540" y2="650" stroke="#ff7711" stroke-width="5" stroke-linecap="round"/>
+  <line x1="540" y1="650" x2="540" y2="490" stroke="#ff7711" stroke-width="5"/>
+  <line x1="540" y1="490" x2="700" y2="490" stroke="#ff7711" stroke-width="5"/>
+
+  <!-- CS3 (GPIO27 → MAX31855#3) -->
+  <line x1="360" y1="700" x2="560" y2="700" stroke="#ff5500" stroke-width="5" stroke-linecap="round"/>
+  <line x1="560" y1="700" x2="560" y2="610" stroke="#ff5500" stroke-width="5"/>
+  <line x1="560" y1="610" x2="700" y2="610" stroke="#ff5500" stroke-width="5"/>
+
+  <!-- ===== BME280 への配線 (ESP32 左側 / 3V3 側 J2 列ピンから) ===== -->
+  <!-- SDA: ESP32 GPIO32 ピン左端 (絶対 x=0, y=760) → BME280 上端 (絶対 x=-30, y=830) -->
+  <line x1="0"   y1="760" x2="-30" y2="760" stroke="#1d8a3a" stroke-width="5" stroke-linecap="round"/>
+  <line x1="-30" y1="760" x2="-30" y2="830" stroke="#1d8a3a" stroke-width="5" stroke-linecap="round"/>
+  <!-- SCL: ESP32 GPIO33 ピン左端 (絶対 x=0, y=810) → BME280 上端 (絶対 x=30, y=830) -->
+  <line x1="0"   y1="810" x2="30"  y2="810" stroke="#1d8a3a" stroke-width="5" stroke-linecap="round"/>
+  <line x1="30"  y1="810" x2="30"  y2="830" stroke="#1d8a3a" stroke-width="5" stroke-linecap="round"/>
+
+  <!-- 3.3V: ESP32 3.3V ピン (絶対 x=80, y=330) から左下に降りて BME280 上端 (絶対 x=-90, y=830) -->
+  <line x1="80"  y1="330" x2="-150" y2="330" stroke="#e22" stroke-width="5" stroke-linecap="round"/>
+  <line x1="-150" y1="330" x2="-150" y2="810" stroke="#e22" stroke-width="5" stroke-linecap="round"/>
+  <line x1="-150" y1="810" x2="-90"  y2="810" stroke="#e22" stroke-width="5" stroke-linecap="round"/>
+  <line x1="-90"  y1="810" x2="-90"  y2="830" stroke="#e22" stroke-width="5" stroke-linecap="round"/>
+
+  <!-- GND: ESP32 GND ピン (絶対 x=80, y=380) から左下に降りて BME280 上端 (絶対 x=90, y=830) -->
+  <line x1="80"   y1="380" x2="-170" y2="380" stroke="#000" stroke-width="5" stroke-linecap="round"/>
+  <line x1="-170" y1="380" x2="-170" y2="790" stroke="#000" stroke-width="5" stroke-linecap="round"/>
+  <line x1="-170" y1="790" x2="90"   y2="790" stroke="#000" stroke-width="5" stroke-linecap="round"/>
+  <line x1="90"   y1="790" x2="90"   y2="830" stroke="#000" stroke-width="5" stroke-linecap="round"/>
+
+  <!-- ===== 電源デカップリング: 100μF 電解 + 0.1μF セラミック =====
+       3.3V レール (x=660) と GND レール (x=640) の間、
+       ESP32 と MAX31855 群の中間付近 (y=440 付近、MAX31855 #1 と #2 の間) に配置 -->
+  <!-- 100μF 電解 (極性あり) -->
+  <g transform="translate(580, 420)">
+    <!-- リード: 3.3V レール (x=660 → 80 右へ) と GND レール (x=640 → 60 右へ) からこのコンデンサへ -->
+    <line x1="60" y1="-40" x2="60" y2="0"  stroke="#222" stroke-width="2"/>  <!-- GND レールから (上方向は負 = 上が下方向、ここでは上から下へ) -->
+    <line x1="80" y1="-40" x2="80" y2="0"  stroke="#222" stroke-width="2"/>  <!-- 3.3V レールから -->
+    <!-- 電解コンデンサ記号: 上(+)が直線、下(-)が湾曲(白帯) -->
+    <line x1="50" y1="0"  x2="90" y2="0"  stroke="#222" stroke-width="3"/>     <!-- + 板 (3.3V 側) -->
+    <path d="M 50 12 Q 70 6, 90 12" fill="none" stroke="#222" stroke-width="3"/> <!-- - 板 (GND 側、湾曲=白帯) -->
+    <!-- リード (本体下端) -->
+    <line x1="60" y1="12" x2="60" y2="30" stroke="#222" stroke-width="2"/>
+    <line x1="80" y1="0"  x2="80" y2="30" stroke="#222" stroke-width="2"/>
+    <text class="lbl" x="100" y="6" fill="#222">100μF (16V) 電解</text>
+    <text class="lbl" x="100" y="22" fill="#888">白帯=GND側</text>
+  </g>
+  <!-- 0.1μF セラミック (並列、無極性) -->
+  <g transform="translate(580, 470)">
+    <line x1="60" y1="-20" x2="60" y2="0"  stroke="#222" stroke-width="2"/>
+    <line x1="80" y1="-20" x2="80" y2="0"  stroke="#222" stroke-width="2"/>
+    <!-- セラミック: 平行2本線 -->
+    <line x1="50" y1="0"  x2="90" y2="0"  stroke="#222" stroke-width="3"/>
+    <line x1="50" y1="8"  x2="90" y2="8"  stroke="#222" stroke-width="3"/>
+    <line x1="60" y1="8"  x2="60" y2="28" stroke="#222" stroke-width="2"/>
+    <line x1="80" y1="8"  x2="80" y2="28" stroke="#222" stroke-width="2"/>
+    <text class="lbl" x="100" y="6" fill="#222">0.1μF セラミック</text>
+  </g>
+
+  <!-- 電源パスコン注記 (左下) -->
+  <g transform="translate(80, 900)">
+    <rect x="0" y="0" width="500" height="80" fill="#fff" stroke="#bbb" stroke-width="1" rx="6"/>
+    <text class="legend" x="14" y="24" font-weight="bold">電源デカップリング(必ず付ける)</text>
+    <text class="legend" x="14" y="46">⚡ 16V 100μF 電解コンデンサ + 0.1μF セラミック  ↑図中に描画済み</text>
+    <text class="legend" x="14" y="66">配置: ESP32 と MAX31855 群の中間付近、3.3V/GND レール間</text>
+  </g>
+
+  <!-- 熱電対の取付注記 (右下) -->
+  <g transform="translate(700, 900)">
+    <rect x="0" y="0" width="660" height="80" fill="#fff" stroke="#bbb" stroke-width="1" rx="6"/>
+    <text class="legend" x="14" y="24" font-weight="bold">熱電対プローブ (K型) の取り付け</text>
+    <text class="legend" x="14" y="46">CH0/CH1: 2×200mm 細プローブ → やきいもに刺す/表面に当てる</text>
+    <text class="legend" x="14" y="66">CH2/CH3: 3×100mm 太プローブ → 釜の中(雰囲気) / 石の表面</text>
+  </g>
+
+</svg>
