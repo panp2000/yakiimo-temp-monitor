@@ -38,8 +38,10 @@ sed -i -E "s|^const SUPABASE_URL = \".*\";|const SUPABASE_URL = \"${SUPABASE_URL
 sed -i -E "s|^const SUPABASE_ANON_KEY = \".*\";|const SUPABASE_ANON_KEY = \"${SUPABASE_ANON_KEY}\";|" main.js
 
 # 置換結果のサニティチェック (プレースホルダ残留を検知)
-if grep -q "YOUR_PROJECT" main.js || grep -q "YOUR_ANON_KEY" main.js || grep -q '\[屋号\]' main.js; then
-  echo "$LOG ERROR: 置換後の main.js にプレースホルダが残留している。env 値を確認すること" >&2
+if grep -qE '^const SUPABASE_URL = "https://YOUR_PROJECT' main.js \
+   || grep -qE '^const SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_KEY"' main.js \
+   || grep -qE '^const BRAND_NAME = "\[屋号\]"' main.js; then
+  echo "$LOG ERROR: const 宣言の置換に失敗。env 値と main.js.example のプレースホルダ書式を確認" >&2
   exit 1
 fi
 
