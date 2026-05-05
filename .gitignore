@@ -1,22 +1,10 @@
 # secrets (never commit)
 firmware-esphome/secrets.yaml
-firmware-platformio-archive/include/secrets.h
-firmware/include/secrets.h
 dashboard/main.js
 
 # ESPHome build artifacts
 firmware-esphome/.esphome/
 firmware-esphome/.pioenvs/
-
-# PlatformIO build artifacts (legacy)
-firmware-platformio-archive/.pio/
-firmware-platformio-archive/.pioenvs/
-firmware-platformio-archive/.piolibdeps/
-firmware-platformio-archive/.vscode/
-firmware/.pio/
-firmware/.pioenvs/
-firmware/.piolibdeps/
-firmware/.vscode/
 
 # OS
 .DS_Store
