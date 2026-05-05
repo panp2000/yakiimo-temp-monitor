@@ -454,7 +454,7 @@ function initChart() {
       pointHoverBorderWidth: 2,
       pointHoverBackgroundColor: color,
       pointHoverBorderColor: bgCard,
-      tension: 0.3,
+      tension: 0.5,
       spanGaps: true,
       parsing: false, // {x, y} をそのまま使う
     };
