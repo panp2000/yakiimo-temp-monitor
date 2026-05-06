@@ -45,4 +45,17 @@ if grep -qE '^const SUPABASE_URL = "https://YOUR_PROJECT' main.js \
   exit 1
 fi
 
+# admin template 生成 (ADMIN_FILENAME env が設定されている場合のみ)
+if [ -n "${ADMIN_FILENAME:-}" ]; then
+  if [ ! -f admin.template.html ]; then
+    echo "$LOG ERROR: admin.template.html が見つからない" >&2
+    exit 1
+  fi
+  # ファイル名は ADMIN_FILENAME (拡張子なしで env に入れる前提) + .html
+  cp admin.template.html "${ADMIN_FILENAME}.html"
+  echo "$LOG admin page を ${ADMIN_FILENAME}.html として出力"
+else
+  echo "$LOG WARN: ADMIN_FILENAME 未設定。管理画面はビルドしない (live のみ)"
+fi
+
 echo "$LOG main.js を生成完了 ($(wc -c < main.js) bytes)"

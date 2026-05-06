@@ -249,6 +249,29 @@ GitHub リポを Cloudflare Pages に接続すると、main ブランチへの p
 
 以降、main へ push すると自動で再デプロイされます。ビルド時は [`dashboard/build.sh`](dashboard/build.sh) が `main.js.example` から `main.js` を生成します。env vars 未設定 / プレースホルダ残留はビルド失敗で誤公開を防ぎます。
 
+### 管理画面 (Admin) のセットアップ
+
+オーナー専用の管理画面を不可視 URL + Cloudflare Access の二重防御で運用します。
+公開しないため任意のオーナーのみ追加してください。
+
+1. Cloudflare Pages → Settings → Environment variables に追加 (Production):
+   - `ADMIN_FILENAME` = `xxxxxxx-admin` (推測不可な文字列、英小文字・数字・ハイフンのみ)
+   この値が URL に直接入るため、漏洩防止のため env で管理します。
+
+2. 再 deploy 後、Cloudflare Dashboard → Workers & Pages → `yakiimo-temp-monitor`
+   → 同じ project 内の Cloudflare Access 設定:
+   - Access → Applications → Add an application → Self-hosted
+   - Application name: `yakiimo-admin`
+   - Application domain: `yakiimo-temp-monitor.sai-kachi.workers.dev`
+   - Path: `/${ADMIN_FILENAME}.html` (実値で記載)
+   - Identity providers: One-time PIN (メール) または Google などお好みで
+   - Policy: Include - Emails - `your@email.com`
+3. アクセス時は `https://yakiimo-temp-monitor.sai-kachi.workers.dev/${ADMIN_FILENAME}.html`
+   をブラウザで開く。Access による認証画面 → 通過 → 管理画面表示。
+
+ファイル名を変更したい場合は env を書き換えて再 deploy、Access ポリシーの Path も更新。
+古い URL は build 時に再生成されないため自動的に 404 になります。
+
 ### Cloudflare Pages 手動デプロイ (緊急時用)
 
 GitHub 連携が使えない場合のフォールバック。`secrets.yaml` から `main.js` への値同期 + `wrangler` でのデプロイを一括実行するスクリプトを同梱しています。
