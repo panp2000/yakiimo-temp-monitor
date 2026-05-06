@@ -245,6 +245,11 @@ GitHub リポを Cloudflare Pages に接続すると、main ブランチへの p
    - `SUPABASE_URL`
    - `SUPABASE_ANON_KEY`
    - `BRAND_NAME`
+
+   オプション (未設定時は SNS / ブログ誘導 CTA の該当リンクが表示されません):
+   - `SOCIAL_TWITTER`   — X (Twitter) URL (例: `https://x.com/your_handle`)
+   - `SOCIAL_INSTAGRAM` — Instagram URL (例: `https://www.instagram.com/your_handle/`)
+   - `SOCIAL_BLOG`      — ブログ URL (note / WordPress / 自前ブログ等)
 5. Save and Deploy
 
 以降、main へ push すると自動で再デプロイされます。ビルド時は [`dashboard/build.sh`](dashboard/build.sh) が `main.js.example` から `main.js` を生成します。env vars 未設定 / プレースホルダ残留はビルド失敗で誤公開を防ぎます。

@@ -904,3 +904,56 @@ main {
   .card-name { font-size: 0.74rem; }
   .brand-title { font-size: 0.95rem; }
 }
+
+/* ---------------- Social CTA (footer 下部 SNS / ブログ誘導) ---------------- */
+.social-cta {
+  max-width: 720px;
+  margin: 16px auto 32px;
+  padding: 24px 24px 8px;
+  text-align: center;
+  font-family: var(--font-body);
+  border-top: 1px solid var(--border-soft);
+}
+.social-cta-lead {
+  margin: 0 0 14px;
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  color: var(--ink-muted);
+  letter-spacing: 0.08em;
+  opacity: 0.85;
+}
+.social-cta-links {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  justify-content: center;
+}
+.social-cta-links a {
+  color: var(--accent-primary);
+  text-decoration: none;
+  font-size: 0.92rem;
+  letter-spacing: 0.04em;
+  border-bottom: 1px dotted currentColor;
+  padding-bottom: 2px;
+  transition: color 0.2s ease, border-color 0.2s ease;
+}
+.social-cta-links a:hover,
+.social-cta-links a:focus-visible {
+  color: var(--ink);
+  border-bottom-color: var(--ink);
+  outline: none;
+}
+@media (max-width: 540px) {
+  .social-cta {
+    margin: 8px auto 24px;
+    padding: 20px 16px 8px;
+  }
+  .social-cta-links {
+    gap: 12px;
+    flex-direction: column;
+    align-items: center;
+  }
+}

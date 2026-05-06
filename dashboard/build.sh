@@ -37,6 +37,12 @@ sed -i -E "s|^const BRAND_NAME = \".*\";|const BRAND_NAME = \"${BRAND_NAME}\";|"
 sed -i -E "s|^const SUPABASE_URL = \".*\";|const SUPABASE_URL = \"${SUPABASE_URL}\";|" main.js
 sed -i -E "s|^const SUPABASE_ANON_KEY = \".*\";|const SUPABASE_ANON_KEY = \"${SUPABASE_ANON_KEY}\";|" main.js
 
+# SNS / ブログ誘導 CTA (任意, 未設定時は空文字 → JS 側で該当リンク非表示)
+# 区切りに | を使うため、URL 中に | が含まれていると壊れる点に注意 (現実的に発生しない)
+sed -i -E "s|\"\\[SOCIAL_TWITTER\\]\"|\"${SOCIAL_TWITTER:-}\"|" main.js
+sed -i -E "s|\"\\[SOCIAL_INSTAGRAM\\]\"|\"${SOCIAL_INSTAGRAM:-}\"|" main.js
+sed -i -E "s|\"\\[SOCIAL_BLOG\\]\"|\"${SOCIAL_BLOG:-}\"|" main.js
+
 # 置換結果のサニティチェック (プレースホルダ残留を検知)
 if grep -qE '^const SUPABASE_URL = "https://YOUR_PROJECT' main.js \
    || grep -qE '^const SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_KEY"' main.js \

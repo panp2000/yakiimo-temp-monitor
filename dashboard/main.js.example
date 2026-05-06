@@ -11,6 +11,13 @@ const SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_KEY";
 // 空文字 / "[屋号]" のままなら、タイトル冒頭にプレフィックス無しで表示する
 const BRAND_NAME = "[屋号]";
 
+// SNS / ブログ誘導 CTA (footer)
+// build.sh で env vars (SOCIAL_TWITTER / SOCIAL_INSTAGRAM / SOCIAL_BLOG) から置換される。
+// 未設定なら空文字列となり、JS 側で該当リンクを非表示にする。
+const SOCIAL_TWITTER   = "[SOCIAL_TWITTER]";
+const SOCIAL_INSTAGRAM = "[SOCIAL_INSTAGRAM]";
+const SOCIAL_BLOG      = "[SOCIAL_BLOG]";
+
 const TABLE = "yakiimo_temp_logs";
 const REFRESH_INTERVAL_MS = 5000;             // 5秒ごとに増分取得
 const STALE_THRESHOLD_MS = 30 * 1000;         // 30秒データなしで stale 判定
@@ -986,6 +993,34 @@ function refreshLiveState() {
   }
 }
 
+// --------------------------- SNS / ブログ CTA ---------------------------
+// footer の SNS / ブログ誘導リンクを env 値から構築。
+// 未設定 (= プレースホルダのまま / 空文字) のリンクはスキップし、
+// 全部未設定なら footer 自体を非表示にする。
+function renderSocialCta() {
+  const container = document.getElementById("social-cta-links");
+  const cta = document.getElementById("social-cta");
+  if (!container || !cta) return;
+
+  const isSet = (v, placeholder) =>
+    typeof v === "string" && v.trim() !== "" && v !== placeholder;
+
+  const links = [
+    { url: SOCIAL_TWITTER,   label: "X (Twitter)", placeholder: "[SOCIAL_TWITTER]"   },
+    { url: SOCIAL_INSTAGRAM, label: "Instagram",   placeholder: "[SOCIAL_INSTAGRAM]" },
+    { url: SOCIAL_BLOG,      label: "ブログ",       placeholder: "[SOCIAL_BLOG]"      },
+  ].filter(l => isSet(l.url, l.placeholder));
+
+  if (links.length === 0) {
+    cta.style.display = "none";
+    return;
+  }
+
+  container.innerHTML = links.map(l =>
+    `<li><a href="${l.url}" target="_blank" rel="noopener noreferrer">${l.label}</a></li>`
+  ).join("");
+}
+
 // --------------------------- 起動 ---------------------------
 async function bootstrap() {
   initTheme();
@@ -994,6 +1029,7 @@ async function bootstrap() {
   renderScaleToggle();
   applyBrandName();
   buildCards();
+  renderSocialCta();
 
   // テーマ切替ボタン
   if ($themeToggle) {
@@ -1024,38 +1060,8 @@ async function bootstrap() {
   // チャート/カードに復元された hidden 状態を反映 (initChart 直後ゆえ datasets はある)
   applyChannelVisibility();
 
-  // URL パラメータで session を強制指定可能 (隠し機能)
-  const urlParams = new URLSearchParams(window.location.search);
-  const forcedSessionId = urlParams.get("session");
-
-  let initialState;
-  if (forcedSessionId) {
-    // 強制指定: そのセッションの最新行を取りに行ってモード判定
-    const { data, error } = await sb
-      .from(TABLE)
-      .select("measured_at")
-      .eq("session_id", forcedSessionId)
-      .order("measured_at", { ascending: false })
-      .limit(1);
-    if (error) {
-      showWarning(`指定セッションの検出に失敗しました: <code>${error.message}</code>`);
-      return;
-    }
-    if (!data || !data.length) {
-      showWarning(`指定セッション <code>${forcedSessionId}</code> のデータが見つかりません。`);
-      return;
-    }
-    const lastMeasured = data[0].measured_at;
-    const lag = Date.now() - new Date(lastMeasured).getTime();
-    let mode;
-    if (lag <= LIVE_THRESHOLD_MS)  mode = "live";
-    else if (lag <= STALE_LIVE_MS) mode = "stale";
-    else                           mode = "offline";
-    initialState = { sessionId: forcedSessionId, lastMeasured, mode };
-  } else {
-    // 自動検出
-    initialState = await detectLatestSession();
-  }
+  // 公開セッション (RLS で is_public=true のみ可視) を自動検出
+  const initialState = await detectLatestSession();
 
   if (!initialState) {
     showWarning("ただいま計測を行っておりません。次のセッションをお待ちくださいませ。");
