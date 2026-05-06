@@ -5,45 +5,449 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="robots" content="noindex, nofollow">
   <title>管理画面 — やきいも温度モニター</title>
+
+  <!-- Google Fonts: live と同じ family を使用 -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    rel="stylesheet"
+    href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@400;700;800&family=Zen+Maru+Gothic:wght@400;500;700&family=Major+Mono+Display&display=swap">
+
   <link rel="stylesheet" href="style.css">
+
+  <!-- FOUC を防ぐため、CSS 評価前に data-theme を確定する (live と同じ key を共有) -->
+  <script>
+    (function () {
+      try {
+        var stored = localStorage.getItem("yakiimo-theme");
+        var prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+        var initial = stored || (prefersDark ? "dark" : "light");
+        document.documentElement.setAttribute("data-theme", initial);
+      } catch (_) {
+        document.documentElement.setAttribute("data-theme", "light");
+      }
+    })();
+  </script>
+
   <style>
+    /* ===== admin 専用 layout ===== */
     .admin-banner {
-      background: var(--accent-primary, #c25e1f);
-      color: var(--bg-card, #fff);
+      background: var(--accent-primary);
+      color: #fffdf7;
       padding: 8px 16px;
-      font-family: var(--font-body, system-ui);
+      font-family: var(--font-body);
       font-size: 0.85rem;
       letter-spacing: 0.05em;
       text-align: center;
     }
-    .admin-placeholder {
-      max-width: 720px;
-      margin: 80px auto;
-      padding: 40px;
+    .admin-header {
+      max-width: 1280px;
+      margin: 32px auto 16px;
+      padding: 0 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .admin-header h1 {
+      font-family: var(--font-display);
+      color: var(--ink);
+      font-size: 1.6rem;
+      margin: 0;
+    }
+    .admin-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-family: var(--font-body);
+      font-size: 0.85rem;
+      color: var(--ink-muted);
+    }
+    .admin-status .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--ink-muted);
+      box-shadow: 0 0 0 2px var(--bg-card);
+      transition: background-color 200ms ease;
+    }
+    .admin-status[data-state="ok"]    .dot { background: #4caf50; }
+    .admin-status[data-state="loading"] .dot { background: var(--accent-warm); }
+    .admin-status[data-state="error"] .dot { background: #c62828; }
+
+    main.admin-main {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 0 32px 64px;
+    }
+
+    .table-wrap {
+      background: var(--bg-card);
+      border: 1px solid var(--border-soft);
+      border-radius: 12px;
+      box-shadow: var(--shadow-card);
+      overflow-x: auto;
+    }
+
+    table.sessions {
+      width: 100%;
+      border-collapse: collapse;
+      font-family: var(--font-body);
+      font-size: 0.9rem;
+      color: var(--ink);
+    }
+    table.sessions thead th {
+      text-align: left;
+      padding: 12px 14px;
+      background: var(--bg-soft);
+      color: var(--ink-secondary);
+      font-weight: 700;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    table.sessions tbody td {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border-soft);
+      vertical-align: middle;
+    }
+    table.sessions tbody tr:last-child td { border-bottom: none; }
+    table.sessions tbody tr:hover { background: var(--bg-card-hover); }
+
+    .sid {
+      font-family: var(--font-data);
+      font-size: 0.82rem;
+      color: var(--ink-secondary);
+      letter-spacing: 0.02em;
+      word-break: break-all;
+    }
+    .muted { color: var(--ink-muted); }
+    .timestamp {
+      font-family: var(--font-data);
+      font-size: 0.8rem;
+      color: var(--ink-secondary);
+      white-space: nowrap;
+    }
+    .duration {
+      font-family: var(--font-data);
+      font-size: 0.85rem;
+      color: var(--ink);
+      white-space: nowrap;
+    }
+
+    .live-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 10px;
+      border-radius: 999px;
+      background: rgba(196, 77, 46, 0.12);
+      color: #c44d2e;
+      font-family: var(--font-body);
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+    }
+    .live-badge::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #c44d2e;
+      box-shadow: 0 0 0 0 rgba(196, 77, 46, 0.7);
+      animation: live-pulse 1.4s ease-out infinite;
+    }
+    @keyframes live-pulse {
+      0%   { box-shadow: 0 0 0 0 rgba(196, 77, 46, 0.55); }
+      70%  { box-shadow: 0 0 0 8px rgba(196, 77, 46, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(196, 77, 46, 0); }
+    }
+
+    .toggle-btn {
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: var(--bg-elevated);
+      color: var(--ink);
+      padding: 6px 14px;
+      border-radius: 999px;
+      font-family: var(--font-body);
+      font-size: 0.82rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      transition: background-color 160ms ease, color 160ms ease, border-color 160ms ease, opacity 160ms ease;
+    }
+    .toggle-btn:hover:not([disabled]) { background: var(--bg-card-hover); }
+    .toggle-btn[data-public="true"] {
+      background: var(--accent-primary);
+      border-color: var(--accent-primary);
+      color: #fffdf7;
+    }
+    .toggle-btn[data-public="true"]:hover:not([disabled]) {
+      background: var(--accent-hot);
+      border-color: var(--accent-hot);
+    }
+    .toggle-btn[disabled] { opacity: 0.5; cursor: not-allowed; }
+
+    .empty-row td {
       text-align: center;
-      font-family: var(--font-body, system-ui);
-      color: var(--ink-muted, #555);
+      padding: 32px;
+      color: var(--ink-muted);
+      font-family: var(--font-body);
     }
-    .admin-placeholder h1 {
-      font-family: var(--font-display, serif);
-      font-size: 1.8rem;
-      color: var(--ink, #222);
-      margin-bottom: 16px;
+
+    .error-banner {
+      max-width: 1280px;
+      margin: 0 auto 16px;
+      padding: 12px 16px;
+      background: #fdecea;
+      color: #b71c1c;
+      border: 1px solid #f5c2c0;
+      border-radius: 8px;
+      font-family: var(--font-body);
+      font-size: 0.88rem;
     }
-    .admin-placeholder p {
-      line-height: 1.7;
+    [data-theme="dark"] .error-banner {
+      background: #3a1a18;
+      color: #ff8a80;
+      border-color: #6b2724;
     }
+    .error-banner.hidden { display: none; }
+
+    footer.admin-footer {
+      max-width: 1280px;
+      margin: 32px auto 24px;
+      padding: 0 32px;
+      text-align: center;
+      font-family: var(--font-body);
+      font-size: 0.85rem;
+      color: var(--ink-muted);
+    }
+    footer.admin-footer a { color: inherit; text-decoration: underline; }
   </style>
 </head>
 <body>
   <div class="admin-banner">管理画面 (Admin)</div>
-  <main class="admin-placeholder">
+
+  <header class="admin-header">
     <h1>やきいも セッション管理</h1>
-    <p>セッション一覧・公開切替・コメント機能は Phase 4 で実装予定でございます。</p>
-    <p>現在は認証 + 不可視 URL の動作確認用骨組みです。</p>
-    <p style="margin-top:32px;font-size:0.8rem;opacity:0.6;">
-      <a href="/" style="color:inherit">↩ live dashboard へ戻る</a>
-    </p>
+    <div class="admin-status" id="conn-status" data-state="loading" aria-live="polite">
+      <span class="dot" aria-hidden="true"></span>
+      <span class="label" id="conn-status-label">接続中…</span>
+    </div>
+  </header>
+
+  <div id="error-banner" class="error-banner hidden" role="alert"></div>
+
+  <main class="admin-main">
+    <div class="table-wrap">
+      <table class="sessions" aria-label="セッション一覧">
+        <thead>
+          <tr>
+            <th>session_id</th>
+            <th>display_name</th>
+            <th>purpose</th>
+            <th>公開</th>
+            <th>状態</th>
+            <th>started_at</th>
+            <th>ended_at</th>
+            <th>期間</th>
+          </tr>
+        </thead>
+        <tbody id="sessions-tbody">
+          <tr class="empty-row"><td colspan="8">読込中…</td></tr>
+        </tbody>
+      </table>
+    </div>
   </main>
+
+  <footer class="admin-footer">
+    <p><a href="/">↩ live dashboard へ戻る</a></p>
+  </footer>
+
+  <!-- Supabase JS SDK (live と同じ version 系) -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+  <script>
+    // build.sh が以下 2 つのプレースホルダを env で置換する
+    const SUPABASE_URL = "[ADMIN_SUPABASE_URL]";
+    const SUPABASE_SERVICE_ROLE_KEY = "[ADMIN_SUPABASE_SERVICE_ROLE_KEY]";
+
+    const REFRESH_INTERVAL_MS = 5_000;
+    const LIVE_THRESHOLD_MS   = 60_000;
+
+    const tbody       = document.getElementById("sessions-tbody");
+    const statusEl    = document.getElementById("conn-status");
+    const statusLabel = document.getElementById("conn-status-label");
+    const errorBanner = document.getElementById("error-banner");
+
+    // service_role を使って RLS を bypass (CF Access gate 済の前提)
+    const supabase = window.supabase.createClient(
+      SUPABASE_URL,
+      SUPABASE_SERVICE_ROLE_KEY,
+      { auth: { persistSession: false, autoRefreshToken: false } }
+    );
+
+    // toggle 中の session_id を保持して二重押下を防ぐ
+    const togglingSet = new Set();
+
+    function setStatus(state, label) {
+      statusEl.setAttribute("data-state", state);
+      statusLabel.textContent = label;
+    }
+
+    function showError(msg) {
+      errorBanner.textContent = msg;
+      errorBanner.classList.remove("hidden");
+    }
+    function hideError() {
+      errorBanner.classList.add("hidden");
+      errorBanner.textContent = "";
+    }
+
+    function escapeHtml(s) {
+      if (s === null || s === undefined) return "";
+      return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function formatTs(iso) {
+      if (!iso) return "—";
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return "—";
+      const pad = (n) => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    }
+
+    function formatDuration(startIso, endIso) {
+      if (!startIso || !endIso) return "—";
+      const start = new Date(startIso).getTime();
+      const end   = new Date(endIso).getTime();
+      if (!isFinite(start) || !isFinite(end) || end < start) return "—";
+      let sec = Math.floor((end - start) / 1000);
+      const h = Math.floor(sec / 3600); sec -= h * 3600;
+      const m = Math.floor(sec / 60);   sec -= m * 60;
+      const pad = (n) => String(n).padStart(2, "0");
+      return h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${pad(m)}:${pad(sec)}`;
+    }
+
+    // ライブ判定: ended_at は trigger により最終 measured_at に同期される。
+    // 60 秒以内なら「データが流れている = LIVE」。
+    function isLive(endedAt) {
+      if (!endedAt) return false;
+      const end = new Date(endedAt).getTime();
+      if (!isFinite(end)) return false;
+      return (Date.now() - end) < LIVE_THRESHOLD_MS;
+    }
+
+    async function fetchSessions() {
+      const { data, error } = await supabase
+        .from("yakiimo_sessions")
+        .select("session_id, display_name, purpose, is_public, started_at, ended_at")
+        .order("started_at", { ascending: false, nullsFirst: false });
+
+      if (error) throw error;
+      return data || [];
+    }
+
+    function renderTable(sessions) {
+      if (!sessions || sessions.length === 0) {
+        tbody.innerHTML = `<tr class="empty-row"><td colspan="8">セッションがまだありません</td></tr>`;
+        return;
+      }
+
+      const rows = sessions.map((s) => {
+        const live = isLive(s.ended_at);
+        const isPublic = s.is_public === true;
+        const toggling = togglingSet.has(s.session_id);
+        const btnLabel = isPublic ? "PUBLIC" : "private";
+        const stateCell = live
+          ? `<span class="live-badge">LIVE</span>`
+          : `<span class="muted">—</span>`;
+
+        return `
+          <tr>
+            <td><span class="sid">${escapeHtml(s.session_id)}</span></td>
+            <td>${s.display_name ? escapeHtml(s.display_name) : `<span class="muted">—</span>`}</td>
+            <td>${escapeHtml(s.purpose || "—")}</td>
+            <td>
+              <button
+                type="button"
+                class="toggle-btn"
+                data-session-id="${escapeHtml(s.session_id)}"
+                data-public="${isPublic ? "true" : "false"}"
+                ${toggling ? "disabled" : ""}
+                title="${isPublic ? "クリックで非公開化" : "クリックで公開"}"
+              >${toggling ? "…" : btnLabel}</button>
+            </td>
+            <td>${stateCell}</td>
+            <td><span class="timestamp">${escapeHtml(formatTs(s.started_at))}</span></td>
+            <td><span class="timestamp">${escapeHtml(formatTs(s.ended_at))}</span></td>
+            <td><span class="duration">${escapeHtml(formatDuration(s.started_at, s.ended_at))}</span></td>
+          </tr>
+        `;
+      });
+
+      tbody.innerHTML = rows.join("");
+    }
+
+    async function togglePublic(sessionId, currentPublic) {
+      if (togglingSet.has(sessionId)) return; // 二重押下ガード
+      togglingSet.add(sessionId);
+
+      // 該当ボタンのみ即時 disable (視覚的 feedback)
+      const btn = tbody.querySelector(`button.toggle-btn[data-session-id="${CSS.escape(sessionId)}"]`);
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = "…";
+      }
+
+      try {
+        const { error } = await supabase
+          .from("yakiimo_sessions")
+          .update({ is_public: !currentPublic })
+          .eq("session_id", sessionId);
+
+        if (error) throw error;
+        hideError();
+      } catch (e) {
+        console.error("toggle 失敗", e);
+        showError(`公開切替に失敗しました: ${e.message || e}`);
+      } finally {
+        togglingSet.delete(sessionId);
+        // 結果を反映するため即座に再 fetch (排他保証は DB トリガーが処理)
+        await refresh();
+      }
+    }
+
+    async function refresh() {
+      try {
+        const sessions = await fetchSessions();
+        renderTable(sessions);
+        setStatus("ok", `接続中 (${sessions.length} 件)`);
+        hideError();
+      } catch (e) {
+        console.error("fetchSessions 失敗", e);
+        setStatus("error", "接続エラー");
+        showError(`セッション取得失敗: ${e.message || e}`);
+      }
+    }
+
+    // toggle ボタン: イベント委譲
+    tbody.addEventListener("click", (ev) => {
+      const btn = ev.target.closest("button.toggle-btn");
+      if (!btn) return;
+      const sid = btn.getAttribute("data-session-id");
+      const cur = btn.getAttribute("data-public") === "true";
+      if (sid) togglePublic(sid, cur);
+    });
+
+    // 初回 + 5 秒間隔
+    refresh();
+    setInterval(refresh, REFRESH_INTERVAL_MS);
+  </script>
 </body>
 </html>

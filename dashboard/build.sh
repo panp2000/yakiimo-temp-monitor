@@ -53,13 +53,23 @@ fi
 
 # admin template 生成 (ADMIN_FILENAME env が設定されている場合のみ)
 if [ -n "${ADMIN_FILENAME:-}" ]; then
+  : "${SUPABASE_SERVICE_ROLE_KEY:?$LOG ADMIN_FILENAME 設定時は SUPABASE_SERVICE_ROLE_KEY も必須}"
   if [ ! -f admin.template.html ]; then
     echo "$LOG ERROR: admin.template.html が見つからない" >&2
     exit 1
   fi
   # ファイル名は ADMIN_FILENAME (拡張子なしで env に入れる前提) + .html
   cp admin.template.html "${ADMIN_FILENAME}.html"
-  echo "$LOG admin page を ${ADMIN_FILENAME}.html として出力"
+  # admin file 内のプレースホルダを env で置換
+  # 区切り文字に | を使い、URL / JWT 中の / との衝突を回避
+  sed -i -E "s|\"\\[ADMIN_SUPABASE_URL\\]\"|\"${SUPABASE_URL}\"|" "${ADMIN_FILENAME}.html"
+  sed -i -E "s|\"\\[ADMIN_SUPABASE_SERVICE_ROLE_KEY\\]\"|\"${SUPABASE_SERVICE_ROLE_KEY}\"|" "${ADMIN_FILENAME}.html"
+  # 残留検知: プレースホルダが置換されていなければ build を失敗させる
+  if grep -qE '"\[ADMIN_SUPABASE_URL\]"|"\[ADMIN_SUPABASE_SERVICE_ROLE_KEY\]"' "${ADMIN_FILENAME}.html"; then
+    echo "$LOG ERROR: admin file のプレースホルダ置換失敗" >&2
+    exit 1
+  fi
+  echo "$LOG admin page を ${ADMIN_FILENAME}.html として出力 (service_role 埋込済)"
 else
   echo "$LOG WARN: ADMIN_FILENAME 未設定。管理画面はビルドしない (live のみ)"
 fi

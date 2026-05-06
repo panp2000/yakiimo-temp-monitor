@@ -261,7 +261,13 @@ GitHub リポを Cloudflare Pages に接続すると、main ブランチへの p
 
 1. Cloudflare Pages → Settings → Environment variables に追加 (Production):
    - `ADMIN_FILENAME` = `xxxxxxx-admin` (推測不可な文字列、英小文字・数字・ハイフンのみ)
-   この値が URL に直接入るため、漏洩防止のため env で管理します。
+     この値が URL に直接入るため、漏洩防止のため env で管理します。
+   - `SUPABASE_SERVICE_ROLE_KEY` = Supabase Dashboard → Project Settings → API → `service_role` `secret` key
+     (200 文字超の JWT、`anon` key とは別物)。**SECRET 扱い**。
+     この key は CF Pages の env にのみ保存し、絶対に repo にコミットしないこと。
+     CF Access で gate された管理画面 file (`${ADMIN_FILENAME}.html`) 内に build 時に
+     埋込まれ、RLS を bypass して `yakiimo_sessions` を操作するために使用します。
+     `ADMIN_FILENAME` を設定する場合は本 key も必須 (build.sh が起動時に検証)。
 
 2. 再 deploy 後、Cloudflare Dashboard → Workers & Pages → `yakiimo-temp-monitor`
    → 同じ project 内の Cloudflare Access 設定:
