@@ -101,7 +101,7 @@ cd /Users/panp/src/company/projects/yakiimo-temp-monitor
 wrangler pages deploy dashboard --project-name yakiimo-temp-monitor
 ```
 
-初回はプロジェクト名を聞かれる。デプロイ後 `https://yakiimo-temp-monitor.pages.dev/` のような URL が発行される。
+初回はプロジェクト名を聞かれる。デプロイ後 `https://yakiimo-temp-monitor.sai-kachi.workers.dev/` のような URL が発行される。
 
 ### 方法 B: ダッシュボードからの Direct Upload(GUI 派向け)
 
@@ -124,7 +124,7 @@ wrangler pages deploy dashboard --project-name yakiimo-temp-monitor
 
 Supabase は anon ロールに対して全 origin から SELECT を許可するデフォルト設定なので追加設定は不要。
 将来 origin 制限を行う場合は、Supabase の Project Settings → API → "URL Configuration" で
-Cloudflare Pages の URL(`https://yakiimo-temp-monitor.pages.dev`)を allow list に追加する。
+Cloudflare Pages の URL(`https://yakiimo-temp-monitor.sai-kachi.workers.dev`)を allow list に追加する。
 
 ## トラブルシューティング
 
