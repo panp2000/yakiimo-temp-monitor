@@ -1045,7 +1045,7 @@ async function bootstrap() {
   }
 
   if (!initialState) {
-    showWarning("<code>yakiimo_temp_logs</code> にデータが見つかりませんでした。ESP32 が稼働しているか、anon key と RLS の SELECT 権限を確認してください。");
+    showWarning("ただいま計測を行っておりません。次のセッションをお待ちくださいませ。");
     updateLiveHeader({ mode: "offline" });
     return;
   }
