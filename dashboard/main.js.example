@@ -302,13 +302,13 @@ function setWindowKey(key) {
 function updateChartRange() {
   if (!chart) return;
   const preset = getCurrentPreset();
-  const now = Date.now();
+  const anchor = getWindowAnchor();
   if (preset && preset.ms != null) {
-    chart.options.scales.x.min = now - preset.ms;
-    chart.options.scales.x.max = now;
+    chart.options.scales.x.min = anchor - preset.ms;
+    chart.options.scales.x.max = anchor;
   } else {
     chart.options.scales.x.min = sessionStartIso ? new Date(sessionStartIso).valueOf() : undefined;
-    chart.options.scales.x.max = now;
+    chart.options.scales.x.max = anchor;
   }
   chart.update("none");
 }
@@ -719,6 +719,19 @@ async function fetchIncrementalData(sessionId, afterIso) {
 
 // --------------------------- 描画 ---------------------------
 
+// 時間窓のアンカー時刻を返す。
+// ライブ中 (最終データから 60 秒以内): 現在時刻を返す → 従来通り sliding。
+// ライブ終了後 (最終データから 60 秒超過): 最終データ時刻を返す → 窓を freeze。
+// これにより、ライブ終了後もカードと整合した「最終データを含む窓」が維持される。
+function getWindowAnchor() {
+  if (lastMeasuredAtIso) {
+    const lastDataMs = new Date(lastMeasuredAtIso).getTime();
+    const now = Date.now();
+    return (now - lastDataMs > 60_000) ? lastDataMs : now;
+  }
+  return Date.now();
+}
+
 // fullSessionData から現窓に合うものだけフィルタしてチャートに反映する。
 // 窓切替時・増分追記時の両方から呼ばれる。Supabase へは行かない。
 //
@@ -729,8 +742,8 @@ async function fetchIncrementalData(sessionId, afterIso) {
 function applyWindowToChart() {
   if (!chart) return;
   const preset = getCurrentPreset();
-  const now = Date.now();
-  const minMs = preset && preset.ms != null ? now - preset.ms : 0; // 全期間は 0 = すべて含む
+  const anchor = getWindowAnchor();
+  const minMs = preset && preset.ms != null ? anchor - preset.ms : 0; // 全期間は 0 = すべて含む
   for (let i = 0; i < CHANNELS.length; i++) {
     const ch = CHANNELS[i];
     const series = fullSessionData[ch.key] || [];
