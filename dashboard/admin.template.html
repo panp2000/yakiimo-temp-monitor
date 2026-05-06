@@ -29,6 +29,10 @@
     })();
   </script>
 
+  <!-- Chart.js (live dashboard と同 version) — admin URL は CF Access gate 配下ゆえ CDN 利用可 -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+
   <style>
     /* ===== admin 専用 layout ===== */
     .admin-banner {
@@ -113,6 +117,7 @@
     }
     table.sessions tbody tr:last-child td { border-bottom: none; }
     table.sessions tbody tr:hover { background: var(--bg-card-hover); }
+    table.sessions tbody tr.clickable { cursor: pointer; }
 
     .sid {
       font-family: var(--font-data);
@@ -213,6 +218,83 @@
     }
     .error-banner.hidden { display: none; }
 
+    /* ===== 詳細モード ===== */
+    .back-btn {
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: var(--bg-elevated);
+      color: var(--ink);
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-family: var(--font-body);
+      font-size: 0.88rem;
+      font-weight: 500;
+      margin-bottom: 16px;
+      transition: background-color 160ms ease, border-color 160ms ease;
+    }
+    .back-btn:hover { background: var(--bg-card-hover); }
+
+    .session-meta {
+      background: var(--bg-card);
+      border: 1px solid var(--border-soft);
+      border-radius: 12px;
+      box-shadow: var(--shadow-card);
+      padding: 20px 24px;
+      margin-bottom: 16px;
+    }
+    .session-meta-id {
+      font-family: var(--font-data);
+      font-size: 1.05rem;
+      color: var(--ink);
+      margin: 0 0 4px;
+      word-break: break-all;
+    }
+    .session-meta-display-name {
+      font-family: var(--font-body);
+      font-size: 0.92rem;
+      color: var(--ink-secondary);
+      margin: 0 0 16px;
+    }
+    .session-meta-stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 12px 24px;
+      margin: 0;
+    }
+    .session-meta-stats > div {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .session-meta-stats dt {
+      font-family: var(--font-body);
+      font-size: 0.74rem;
+      color: var(--ink-muted);
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+    .session-meta-stats dd {
+      font-family: var(--font-data);
+      font-size: 0.92rem;
+      color: var(--ink);
+      margin: 0;
+      word-break: break-word;
+    }
+
+    .session-detail-chart-wrap {
+      background: var(--bg-card);
+      border: 1px solid var(--border-soft);
+      border-radius: 12px;
+      box-shadow: var(--shadow-card);
+      padding: 16px;
+      height: 480px;
+      max-height: 70vh;
+    }
+    .session-detail-chart-wrap canvas {
+      width: 100% !important;
+      height: 100% !important;
+    }
+
     footer.admin-footer {
       max-width: 1280px;
       margin: 32px auto 24px;
@@ -239,25 +321,53 @@
   <div id="error-banner" class="error-banner hidden" role="alert"></div>
 
   <main class="admin-main">
-    <div class="table-wrap">
-      <table class="sessions" aria-label="セッション一覧">
-        <thead>
-          <tr>
-            <th>session_id</th>
-            <th>display_name</th>
-            <th>purpose</th>
-            <th>公開</th>
-            <th>状態</th>
-            <th>started_at</th>
-            <th>ended_at</th>
-            <th>期間</th>
-          </tr>
-        </thead>
-        <tbody id="sessions-tbody">
-          <tr class="empty-row"><td colspan="8">読込中…</td></tr>
-        </tbody>
-      </table>
-    </div>
+    <!-- 一覧ビュー -->
+    <section id="session-list-view">
+      <div class="table-wrap">
+        <table class="sessions" aria-label="セッション一覧">
+          <thead>
+            <tr>
+              <th>session_id</th>
+              <th>display_name</th>
+              <th>purpose</th>
+              <th>公開</th>
+              <th>状態</th>
+              <th>started_at</th>
+              <th>ended_at</th>
+              <th>期間</th>
+            </tr>
+          </thead>
+          <tbody id="sessions-tbody">
+            <tr class="empty-row"><td colspan="8">読込中…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 詳細ビュー (URL ?session=X 時に表示) -->
+    <section id="session-detail-view" hidden>
+      <button type="button" class="back-btn" id="back-to-list">← セッション一覧に戻る</button>
+
+      <div class="session-meta">
+        <h2 class="session-meta-id" id="detail-session-id"></h2>
+        <p class="session-meta-display-name" id="detail-display-name"></p>
+        <dl class="session-meta-stats">
+          <div><dt>用途</dt><dd id="detail-purpose">—</dd></div>
+          <div><dt>公開</dt><dd id="detail-is-public">—</dd></div>
+          <div><dt>開始</dt><dd id="detail-started">—</dd></div>
+          <div><dt>終了</dt><dd id="detail-ended">—</dd></div>
+          <div><dt>期間</dt><dd id="detail-duration">—</dd></div>
+          <div><dt>行数</dt><dd id="detail-row-count">—</dd></div>
+          <div><dt>火入れ</dt><dd id="detail-fire-start">—</dd></div>
+          <div><dt>メモ</dt><dd id="detail-notes">—</dd></div>
+          <div><dt>糖度 (Brix)</dt><dd id="detail-brix">—</dd></div>
+        </dl>
+      </div>
+
+      <div class="session-detail-chart-wrap">
+        <canvas id="session-detail-chart"></canvas>
+      </div>
+    </section>
   </main>
 
   <footer class="admin-footer">
@@ -275,13 +385,33 @@
     const REFRESH_INTERVAL_MS = 5_000;
     const LIVE_THRESHOLD_MS   = 60_000;
 
+    // 一覧 DOM
     const tbody       = document.getElementById("sessions-tbody");
     const statusEl    = document.getElementById("conn-status");
     const statusLabel = document.getElementById("conn-status-label");
     const errorBanner = document.getElementById("error-banner");
 
+    // ビュー切替 DOM
+    const listView    = document.getElementById("session-list-view");
+    const detailView  = document.getElementById("session-detail-view");
+    const backBtn     = document.getElementById("back-to-list");
+
+    // 詳細 DOM
+    const $detailSid       = document.getElementById("detail-session-id");
+    const $detailName      = document.getElementById("detail-display-name");
+    const $detailPurpose   = document.getElementById("detail-purpose");
+    const $detailPublic    = document.getElementById("detail-is-public");
+    const $detailStarted   = document.getElementById("detail-started");
+    const $detailEnded     = document.getElementById("detail-ended");
+    const $detailDuration  = document.getElementById("detail-duration");
+    const $detailRowCount  = document.getElementById("detail-row-count");
+    const $detailFireStart = document.getElementById("detail-fire-start");
+    const $detailNotes     = document.getElementById("detail-notes");
+    const $detailBrix      = document.getElementById("detail-brix");
+    const $detailCanvas    = document.getElementById("session-detail-chart");
+
     // service_role を使って RLS を bypass (CF Access gate 済の前提)
-    const supabase = window.supabase.createClient(
+    const sb = window.supabase.createClient(
       SUPABASE_URL,
       SUPABASE_SERVICE_ROLE_KEY,
       { auth: { persistSession: false, autoRefreshToken: false } }
@@ -290,6 +420,24 @@
     // toggle 中の session_id を保持して二重押下を防ぐ
     const togglingSet = new Set();
 
+    // 一覧 auto-refresh のタイマ (詳細モード中は止める)
+    let listRefreshTimer = null;
+
+    // 詳細チャートインスタンス
+    let detailChart = null;
+
+    // 詳細モードで表示する 5 ch (live dashboard と同じ key/順序、admin 用に色は固定値で踏襲)
+    const CHANNELS = [
+      { key: "potato_internal", label: "芋 内部温度", color: "#c25e1f" },
+      { key: "potato_surface",  label: "芋 表面温度", color: "#e88c4d" },
+      { key: "kiln_ambient",    label: "釜内部温度", color: "#b14418" },
+      { key: "stone_surface",   label: "石 表面温度", color: "#a05c2a" },
+      { key: "env",             label: "気温",       color: "#5a8c66" },
+    ];
+
+    // ============================================================
+    // 共通 util
+    // ============================================================
     function setStatus(state, label) {
       statusEl.setAttribute("data-state", state);
       statusLabel.textContent = label;
@@ -343,8 +491,29 @@
       return (Date.now() - end) < LIVE_THRESHOLD_MS;
     }
 
+    // 3点中央値フィルタ (live dashboard の median3Filter と同等ロジック)
+    // MAX31855 の量子化ジッタ (±0.25°C / 1 LSB) を視覚的に除去するためにのみ使う。
+    function median3Filter(points) {
+      if (!points || points.length < 3) return points ? points.slice() : points;
+      const out = new Array(points.length);
+      for (let i = 0; i < points.length; i++) {
+        const a = points[Math.max(0, i - 1)].y;
+        const b = points[i].y;
+        const c = points[Math.min(points.length - 1, i + 1)].y;
+        const sorted = [a, b, c].filter(v => v != null && !isNaN(v)).sort((x, y) => x - y);
+        out[i] = {
+          x: points[i].x,
+          y: sorted.length === 0 ? null : sorted[Math.floor(sorted.length / 2)],
+        };
+      }
+      return out;
+    }
+
+    // ============================================================
+    // 一覧モード
+    // ============================================================
     async function fetchSessions() {
-      const { data, error } = await supabase
+      const { data, error } = await sb
         .from("yakiimo_sessions")
         .select("session_id, display_name, purpose, is_public, started_at, ended_at")
         .order("started_at", { ascending: false, nullsFirst: false });
@@ -359,7 +528,8 @@
         return;
       }
 
-      const rows = sessions.map((s) => {
+      tbody.innerHTML = "";
+      for (const s of sessions) {
         const live = isLive(s.ended_at);
         const isPublic = s.is_public === true;
         const toggling = togglingSet.has(s.session_id);
@@ -368,30 +538,30 @@
           ? `<span class="live-badge">LIVE</span>`
           : `<span class="muted">—</span>`;
 
-        return `
-          <tr>
-            <td><span class="sid">${escapeHtml(s.session_id)}</span></td>
-            <td>${s.display_name ? escapeHtml(s.display_name) : `<span class="muted">—</span>`}</td>
-            <td>${escapeHtml(s.purpose || "—")}</td>
-            <td>
-              <button
-                type="button"
-                class="toggle-btn"
-                data-session-id="${escapeHtml(s.session_id)}"
-                data-public="${isPublic ? "true" : "false"}"
-                ${toggling ? "disabled" : ""}
-                title="${isPublic ? "クリックで非公開化" : "クリックで公開"}"
-              >${toggling ? "…" : btnLabel}</button>
-            </td>
-            <td>${stateCell}</td>
-            <td><span class="timestamp">${escapeHtml(formatTs(s.started_at))}</span></td>
-            <td><span class="timestamp">${escapeHtml(formatTs(s.ended_at))}</span></td>
-            <td><span class="duration">${escapeHtml(formatDuration(s.started_at, s.ended_at))}</span></td>
-          </tr>
+        const tr = document.createElement("tr");
+        tr.classList.add("clickable");
+        tr.dataset.sessionId = s.session_id;
+        tr.innerHTML = `
+          <td><span class="sid">${escapeHtml(s.session_id)}</span></td>
+          <td>${s.display_name ? escapeHtml(s.display_name) : `<span class="muted">—</span>`}</td>
+          <td>${escapeHtml(s.purpose || "—")}</td>
+          <td>
+            <button
+              type="button"
+              class="toggle-btn public-toggle-btn"
+              data-session-id="${escapeHtml(s.session_id)}"
+              data-public="${isPublic ? "true" : "false"}"
+              ${toggling ? "disabled" : ""}
+              title="${isPublic ? "クリックで非公開化" : "クリックで公開"}"
+            >${toggling ? "…" : btnLabel}</button>
+          </td>
+          <td>${stateCell}</td>
+          <td><span class="timestamp">${escapeHtml(formatTs(s.started_at))}</span></td>
+          <td><span class="timestamp">${escapeHtml(formatTs(s.ended_at))}</span></td>
+          <td><span class="duration">${escapeHtml(formatDuration(s.started_at, s.ended_at))}</span></td>
         `;
-      });
-
-      tbody.innerHTML = rows.join("");
+        tbody.appendChild(tr);
+      }
     }
 
     async function togglePublic(sessionId, currentPublic) {
@@ -399,14 +569,14 @@
       togglingSet.add(sessionId);
 
       // 該当ボタンのみ即時 disable (視覚的 feedback)
-      const btn = tbody.querySelector(`button.toggle-btn[data-session-id="${CSS.escape(sessionId)}"]`);
+      const btn = tbody.querySelector(`button.public-toggle-btn[data-session-id="${CSS.escape(sessionId)}"]`);
       if (btn) {
         btn.disabled = true;
         btn.textContent = "…";
       }
 
       try {
-        const { error } = await supabase
+        const { error } = await sb
           .from("yakiimo_sessions")
           .update({ is_public: !currentPublic })
           .eq("session_id", sessionId);
@@ -419,11 +589,11 @@
       } finally {
         togglingSet.delete(sessionId);
         // 結果を反映するため即座に再 fetch (排他保証は DB トリガーが処理)
-        await refresh();
+        await refreshList();
       }
     }
 
-    async function refresh() {
+    async function refreshList() {
       try {
         const sessions = await fetchSessions();
         renderTable(sessions);
@@ -436,18 +606,215 @@
       }
     }
 
-    // toggle ボタン: イベント委譲
+    // 一覧 row / toggle ボタン: イベント委譲
     tbody.addEventListener("click", (ev) => {
-      const btn = ev.target.closest("button.toggle-btn");
-      if (!btn) return;
-      const sid = btn.getAttribute("data-session-id");
-      const cur = btn.getAttribute("data-public") === "true";
-      if (sid) togglePublic(sid, cur);
+      const toggleBtn = ev.target.closest("button.public-toggle-btn");
+      if (toggleBtn) {
+        // toggle ボタンは詳細遷移しない
+        const sid = toggleBtn.getAttribute("data-session-id");
+        const cur = toggleBtn.getAttribute("data-public") === "true";
+        if (sid) togglePublic(sid, cur);
+        return;
+      }
+      const tr = ev.target.closest("tr.clickable");
+      if (!tr) return;
+      const sid = tr.dataset.sessionId;
+      if (sid) {
+        window.location.search = `?session=${encodeURIComponent(sid)}`;
+      }
     });
 
-    // 初回 + 5 秒間隔
-    refresh();
-    setInterval(refresh, REFRESH_INTERVAL_MS);
+    // ============================================================
+    // 詳細モード
+    // ============================================================
+    async function fetchSessionDetail(sessionId) {
+      // session メタ
+      const sessionsRes = await sb
+        .from("yakiimo_sessions")
+        .select("*")
+        .eq("session_id", sessionId)
+        .limit(1);
+      if (sessionsRes.error) throw sessionsRes.error;
+
+      // 全データ (DESC + 全件取得 + reverse して ASC)
+      const logsRes = await sb
+        .from("yakiimo_temp_logs")
+        .select("measured_at, channel, temp_c, humidity_pct, pressure_hpa")
+        .eq("session_id", sessionId)
+        .order("measured_at", { ascending: false })
+        .limit(50000);
+      if (logsRes.error) throw logsRes.error;
+
+      return {
+        session: (sessionsRes.data || [])[0] || null,
+        logs: (logsRes.data || []).slice().reverse(),
+      };
+    }
+
+    function buildDatasets(logs) {
+      // channel 別に {x, y} 配列を構築 (ASC を維持)
+      const grouped = {};
+      for (const ch of CHANNELS) grouped[ch.key] = [];
+      for (const r of logs) {
+        if (grouped[r.channel] === undefined) continue;
+        if (typeof r.temp_c !== "number") continue;
+        grouped[r.channel].push({ x: new Date(r.measured_at).valueOf(), y: r.temp_c });
+      }
+
+      return CHANNELS.map((ch) => ({
+        label: ch.label,
+        data: median3Filter(grouped[ch.key] || []),
+        borderColor: ch.color,
+        backgroundColor: ch.color + "22",
+        borderWidth: 2,
+        pointRadius: 0,
+        pointHoverRadius: 4,
+        tension: 0.5,
+        spanGaps: true,
+        parsing: false,
+      }));
+    }
+
+    function renderDetailChart(logs) {
+      if (detailChart) {
+        detailChart.destroy();
+        detailChart = null;
+      }
+      const ctx = $detailCanvas.getContext("2d");
+      detailChart = new Chart(ctx, {
+        type: "line",
+        data: { datasets: buildDatasets(logs) },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: false,
+          interaction: { mode: "nearest", intersect: false, axis: "x" },
+          plugins: {
+            legend: {
+              position: "top",
+              align: "end",
+              labels: {
+                boxWidth: 10,
+                boxHeight: 10,
+                usePointStyle: true,
+                padding: 14,
+              },
+            },
+            tooltip: {
+              mode: "nearest",
+              intersect: false,
+              callbacks: {
+                title: (items) => {
+                  if (!items.length) return "";
+                  const d = new Date(items[0].parsed.x);
+                  return d.toLocaleString("ja-JP", { hour12: false });
+                },
+                label: (item) => `${item.dataset.label}: ${item.parsed.y?.toFixed(1)} °C`,
+              },
+            },
+          },
+          scales: {
+            x: {
+              type: "time",
+              time: {
+                tooltipFormat: "yyyy-MM-dd HH:mm:ss",
+                displayFormats: { second: "HH:mm:ss", minute: "HH:mm", hour: "HH:mm" },
+              },
+              ticks: { maxRotation: 0, autoSkip: true, autoSkipPadding: 16 },
+            },
+            y: {
+              title: { display: true, text: "温度 ( °C )" },
+            },
+          },
+        },
+      });
+    }
+
+    function renderDetailMeta(session, rowCount) {
+      $detailSid.textContent = session?.session_id || "(該当なし)";
+      $detailName.textContent = session?.display_name || "";
+      $detailPurpose.textContent = session?.purpose || "—";
+      $detailPublic.textContent = session?.is_public === true ? "PUBLIC" : "private";
+      $detailStarted.textContent = formatTs(session?.started_at);
+      $detailEnded.textContent = formatTs(session?.ended_at);
+      $detailDuration.textContent = formatDuration(session?.started_at, session?.ended_at);
+      $detailRowCount.textContent = rowCount.toLocaleString("ja-JP");
+      $detailFireStart.textContent = session?.fire_start_at ? formatTs(session.fire_start_at) : "—";
+      $detailNotes.textContent = session?.notes ? session.notes : "—";
+      $detailBrix.textContent = (session?.brix !== null && session?.brix !== undefined)
+        ? String(session.brix)
+        : "—";
+    }
+
+    async function loadDetail(sessionId) {
+      try {
+        setStatus("loading", "詳細取得中…");
+        const { session, logs } = await fetchSessionDetail(sessionId);
+        if (!session) {
+          showError(`セッションが見つかりません: ${sessionId}`);
+          renderDetailMeta({ session_id: sessionId }, 0);
+          renderDetailChart([]);
+          setStatus("error", "未検出");
+          return;
+        }
+        renderDetailMeta(session, logs.length);
+        renderDetailChart(logs);
+        setStatus("ok", `詳細表示 (${logs.length.toLocaleString("ja-JP")} 行)`);
+        hideError();
+      } catch (e) {
+        console.error("loadDetail 失敗", e);
+        setStatus("error", "詳細取得エラー");
+        showError(`セッション詳細取得失敗: ${e.message || e}`);
+      }
+    }
+
+    // ============================================================
+    // ビュー切替 (URL ?session= 駆動)
+    // ============================================================
+    function getSessionIdFromURL() {
+      const params = new URLSearchParams(window.location.search);
+      const sid = params.get("session");
+      return sid && sid.trim() !== "" ? sid : null;
+    }
+
+    function showListMode() {
+      detailView.hidden = true;
+      listView.hidden = false;
+      // 詳細チャートは残しても害はないが、メモリ解放のため破棄
+      if (detailChart) {
+        detailChart.destroy();
+        detailChart = null;
+      }
+      // 一覧 auto-refresh を起動
+      refreshList();
+      if (!listRefreshTimer) {
+        listRefreshTimer = setInterval(refreshList, REFRESH_INTERVAL_MS);
+      }
+    }
+
+    function showDetailMode(sessionId) {
+      // 一覧 polling は止める (詳細は静的データ。live セッションは live dashboard で見ればよい)
+      if (listRefreshTimer) {
+        clearInterval(listRefreshTimer);
+        listRefreshTimer = null;
+      }
+      listView.hidden = true;
+      detailView.hidden = false;
+      loadDetail(sessionId);
+    }
+
+    backBtn.addEventListener("click", () => {
+      // ?session= を消すことで一覧モードへ戻る
+      window.location.search = "";
+    });
+
+    // 初期ルーティング
+    const initialSessionId = getSessionIdFromURL();
+    if (initialSessionId) {
+      showDetailMode(initialSessionId);
+    } else {
+      showListMode();
+    }
   </script>
 </body>
 </html>
