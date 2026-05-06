@@ -54,12 +54,6 @@ if [ -n "${ADMIN_FILENAME:-}" ]; then
   # ファイル名は ADMIN_FILENAME (拡張子なしで env に入れる前提) + .html
   cp admin.template.html "${ADMIN_FILENAME}.html"
   echo "$LOG admin page を ${ADMIN_FILENAME}.html として出力"
-  # cp 成功確認 (file 実在 + size + 全 ls 出力)
-  ls -la "${ADMIN_FILENAME}.html"
-  echo "$LOG cwd: $(pwd)"
-  echo "$LOG dashboard dir 全 file 一覧:"
-  ls -la
-  echo "$LOG admin file 先頭行: $(head -1 "${ADMIN_FILENAME}.html")"
 else
   echo "$LOG WARN: ADMIN_FILENAME 未設定。管理画面はビルドしない (live のみ)"
 fi
