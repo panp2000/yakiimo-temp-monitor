@@ -97,7 +97,7 @@ HMAC-SHA256(secret, message)
 
 | 方向 | 許容 |
 |------|------|
-| 過去 | 1 day |
+| 過去 | 5 minutes |
 | 未来 | 1 hour |
 
 ---

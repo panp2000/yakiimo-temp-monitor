@@ -187,7 +187,7 @@ admin HTML は `${ADMIN_FILENAME}.html` として生成され (`dashboard/build.
 8. **anon key を組込んだ Live dashboard JS 配布範囲**: `dashboard/main.js` 内の `SUPABASE_ANON_KEY` は CF Pages から無認証配信される。anon key は public 前提だが、key 単体で `yakiimo_sessions` の `is_public=false` 行 SELECT を試す bot に対しては RLS で stop。
 9. **OTA password / Web UI Basic password の強度**: `secrets.yaml.example:30-36` の例値はそのまま運用すれば弱い。LAN 内攻撃者が OTA で任意 firmware を書き込めば INGEST_HMAC_SECRET 含む全 secret が抽出される。実運用での強度は repo 外管理の `secrets.yaml` 値次第。
 10. **`web_server.auth` Basic 認証は HTTP**: ESPHome の `web_server` (`firmware-esphome/yakiimo.yaml:73-78`) は LAN 内 HTTP。同一 LAN 上で sniff 可能。
-11. **`measured_at` の clock skew 攻撃**: `MEASURED_AT_PAST_INTERVAL = '1 day'` (`contract/src/payload.ts:22`) と緩く、過去 24 時間のリプレイは tolerance 内であれば成立する (上記 4 と組合せ)。
+11. ~~**`measured_at` の clock skew 攻撃**~~ — **Phase 14-C で対処済**。`MEASURED_AT_PAST_INTERVAL` を `"5 minutes"` に縮小 (`contract/src/payload.ts:22`)、HMAC envelope の `TIMESTAMP_TOLERANCE_PAST_SEC = 300` と整合。codegen 経由で `supabase/migrations/007_contract_functions.sql` の `internal.yakiimo_valid_measured_at` 関数も同期更新済。なお `MEASURED_AT_FUTURE_INTERVAL` は `"1 hour"` のまま (NTP 同期前の ESP32 で発生し得る短期 future skew 用、別 gap で扱う場合は trigger 条件を ADR 化)。
 12. **admin HTML 配下の Chart.js / date-fns CDN 依存**: `dashboard/admin.template.html:33-34` は `cdn.jsdelivr.net` を直接読込。CDN 改竄で admin にも影響するが、CF Access の auth wall 内で実行されるためアクセスは限定。
 
 ## Incident response (rotation 手順)

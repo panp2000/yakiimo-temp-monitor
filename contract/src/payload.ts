@@ -19,7 +19,10 @@ export const PRESSURE_HPA_RANGE = { min: 800, max: 1200 } as const;
 /**
  * measured_at の許容ウィンドウ。RLS / DB trigger が SQL interval として消費する。
  */
-export const MEASURED_AT_PAST_INTERVAL = "1 day";
+// Phase 14-C: HMAC envelope の TIMESTAMP_TOLERANCE_PAST_SEC=300 と揃える。
+// envelope レベルで 5 分窓に制限されるため、measured_at の sanity check を
+// 同じ窓に揃えて attack surface を縮小 (THREAT-MODEL.md gap 11 対処)。
+export const MEASURED_AT_PAST_INTERVAL = "5 minutes";
 export const MEASURED_AT_FUTURE_INTERVAL = "1 hour";
 
 export interface LogRow {

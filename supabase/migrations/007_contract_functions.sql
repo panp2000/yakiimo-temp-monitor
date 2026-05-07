@@ -36,7 +36,7 @@ CREATE OR REPLACE FUNCTION internal.yakiimo_valid_measured_at(t timestamptz) RET
   LANGUAGE sql STABLE
   SET search_path = pg_catalog
   AS $$
-    SELECT t > now() - interval '1 day'
+    SELECT t > now() - interval '5 minutes'
        AND t < now() + interval '1 hour'
 $$;
 
