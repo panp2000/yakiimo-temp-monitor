@@ -1,0 +1,12 @@
+name = "yakiimo-ingest"
+main = "src/index.ts"
+compatibility_date = "2026-05-06"
+compatibility_flags = ["nodejs_compat"]
+
+# secrets (wrangler secret put で設定):
+#   - SUPABASE_URL
+#   - SUPABASE_SERVICE_ROLE_KEY
+#   - INGEST_HMAC_SECRET
+
+[observability]
+enabled = true

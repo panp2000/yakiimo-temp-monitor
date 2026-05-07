@@ -17,6 +17,8 @@ data/
 
 # Cloudflare Wrangler ローカルキャッシュ (refresh token 含む)
 .wrangler/
+worker/node_modules/
+worker/.wrangler/
 
 # 検証用スクリーンショット (内部LAN IP 含む、公開不要)
 *.png
