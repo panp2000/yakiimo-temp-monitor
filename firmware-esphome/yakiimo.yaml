@@ -298,8 +298,8 @@ script:
                   return std::string("${ingest_worker_url}") + "/ingest";
                 request_headers:
                   Content-Type: application/json
-                  X-Yakiimo-Timestamp: !lambda 'return id(g_post_ts);'
-                  X-Yakiimo-Signature: !lambda 'return id(g_post_sig);'
+                  X-Yakiimo-Timestamp: !lambda 'return id(g_post_ts).c_str();'
+                  X-Yakiimo-Signature: !lambda 'return id(g_post_sig).c_str();'
                 body: !lambda 'return id(g_post_body);'
                 on_response:
                   then:
