@@ -62,3 +62,4 @@ Envelope と Payload Schema を一括して識別する整数。format 変更時
 - `docs/adr/` — Architecture Decision Records
 - `README.md` — プロジェクト概要とセットアップ手順
 - `contract/src/` — Contract module の TypeScript 実装
+- [Deploy environment](DEPLOY.md) — Workers 構成・build pipeline・運用ルール

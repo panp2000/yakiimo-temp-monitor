@@ -1,0 +1,8 @@
+# dashboard/ 配下のうち Worker static asset として publish したくないものを除外。
+# wrangler 4 の Workers Static Assets が deploy 時に参照する。
+#
+# 対象 (これらは build artifact / template / source であり public 配信不要):
+build.sh
+main.js.example
+*.example
+admin.template.html
