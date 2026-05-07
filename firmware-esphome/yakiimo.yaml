@@ -36,8 +36,11 @@ esphome:
     name: "mycompany.yakiimo-temp-monitor"
     version: "0.2.0-esphome"
   # Phase 8: HMAC-SHA256 計算用 helper (mbedtls ベース) を取り込む
+  # Stage 9-E: contract module の codegen 出力 (contract.generated.h, gitignore) も取り込む。
+  #   ビルド前に `npm run codegen` をリポルートで実行して生成しておくこと。
   includes:
     - hmac_helper.h
+    - contract.generated.h
 
 esp32:
   board: esp32dev
@@ -283,11 +286,15 @@ script:
                 body += "\"pressure_hpa\":" + fmt(id(env_press).state) + "}";
                 body += "]";
 
-                // Unix epoch (秒) — SNTP の time_t を使う
+                // Unix epoch (秒) — SNTP の time_t を使う。globals (g_post_ts) 用に文字列化する
                 std::string ts_unix = std::to_string(static_cast<unsigned long long>(t.timestamp));
 
+                // Stage 9-E: 署名対象 message は contract module 由来の helper で構築する。
+                // 形式: `${version}\n${ts_unix}\n${body}` (contract.generated.h)
+                std::string msg = yakiimo_build_signed_message(static_cast<unsigned long>(t.timestamp), body);
+
                 // HMAC-SHA256 (hmac_helper.h)。secret は yaml 解析時に literal 展開される
-                std::string sig = yakiimo_hmac_sha256_hex("${ingest_hmac_secret}", ts_unix + "\n" + body);
+                std::string sig = yakiimo_hmac_sha256_hex("${ingest_hmac_secret}", msg);
 
                 // globals に格納 (http_request の per-header / per-body lambda が参照)
                 id(g_post_body) = body;
