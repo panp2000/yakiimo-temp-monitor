@@ -296,7 +296,7 @@ script:
             - http_request.post:
                 url: !lambda |-
                   return std::string("${ingest_worker_url}") + "/ingest";
-                headers:
+                request_headers:
                   Content-Type: application/json
                   X-Yakiimo-Timestamp: !lambda 'return id(g_post_ts);'
                   X-Yakiimo-Signature: !lambda 'return id(g_post_sig);'
