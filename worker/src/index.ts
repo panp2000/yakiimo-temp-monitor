@@ -96,7 +96,7 @@ export default {
         "Content-Type": "application/json",
         "apikey": env.SUPABASE_SERVICE_ROLE_KEY,
         "Authorization": `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
-        "Prefer": "return=minimal",
+        "Prefer": "return=minimal, resolution=ignore-duplicates",
       },
       body,
     });

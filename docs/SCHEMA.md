@@ -2,7 +2,7 @@
 
 本文書は Supabase (PostgreSQL) に存在するスキーマ・テーブル・トリガー・cron ジョブ・RLS ポリシーを **観測される migration を出典として** まとめる。migration の番号順に変更履歴を辿るための一覧表もここに置く。設計思想は `docs/CONTEXT.md`、ingest contract の値域は `docs/CONTRACT.md`、上位の防御層は `docs/THREAT-MODEL.md` を参照。
 
-参照する migration は `supabase/migrations/` 配下の以下 8 ファイル:
+参照する migration は `supabase/migrations/` 配下の以下 9 ファイル:
 
 - `001_create_yakiimo_temp_logs.sql`
 - `002_add_anon_select.sql`
@@ -12,6 +12,7 @@
 - `006_drop_anon_insert.sql`
 - `007_contract_functions.sql`
 - `008_use_contract_functions.sql`
+- `009_add_unique_constraint.sql`
 
 ## 概要
 
@@ -55,6 +56,10 @@ INSERT 経路は Worker (`worker/src/index.ts:93-102`、`service_role` で REST 
 |---|---|---|
 | `yakiimo_temp_logs_session_measured_idx` | `(session_id, measured_at)` | セッション別の時系列取得 |
 | `yakiimo_temp_logs_channel_measured_idx` | `(channel, measured_at DESC)` | チャンネル別の最新データ取得 |
+
+### 制約 (migration 009)
+
+- `yakiimo_temp_logs_unique_measurement` UNIQUE (`device_id`, `session_id`, `channel`, `measured_at`) (`supabase/migrations/009_add_unique_constraint.sql:13-15`) — 同一 measurement の重複 INSERT を阻止、replay 攻撃 / 通信再送による重複行を排除
 
 ### RLS policies (最終状態)
 
@@ -257,6 +262,7 @@ SELECT polname, polcmd, polpermissive, polroles::regrole[]
 | 006 | `006_drop_anon_insert.sql` | `anon insert only` policy を DROP (Phase 8-C、Worker 経由化完了) | 以降 anon は INSERT 経路を持たない (migration 006:24) |
 | 007 | `007_contract_functions.sql` | `internal.yakiimo_valid_*` 7 関数を登録 | **auto-generated、手編集禁止**。再生成は `npm run codegen` (migration 007:1-9) |
 | 008 | `008_use_contract_functions.sql` | `yakiimo_temp_logs` に BEFORE INSERT trigger (`yakiimo_temp_logs_validate_trigger`) を張り、L3 検証を全ロールに強制 | `service_role` の RLS bypass を貫通する Defense in Depth Layer 3 (migration 008:8-12) |
+| 009 | add_unique_constraint | yakiimo_temp_logs に (device_id, session_id, channel, measured_at) UNIQUE 制約。Worker の `Prefer: resolution=ignore-duplicates` と併用して replay dedup (THREAT-MODEL gap 4 対応) |  |
 
 ## RLS / trigger 進化の要点 (migration 跨り)
 
