@@ -13,6 +13,28 @@ ESP32 と熱電対 4 本 + 環境センサーで、やきいも(石焼き芋)下
 - セッション自動 close: pg_cron が 5 分毎に走り、30 分以上 idle のセッションを `is_public=false` に落とす
 - サンプリング: 全 5 チャンネル 5 秒統一、5 秒ごとに 5 行を 1 回のバッチ POST
 - 計測時間: 1 セッション ≒ 2 時間、データ量 ≒ 14,400 行
+- ingest 仕様: Yakiimo Ingest Contract (TypeScript source of truth) を C++ ヘッダ / SQL 関数 / Markdown 仕様書に codegen し、ESP32・Worker・Supabase の 3 者で同一定義を共有
+
+## Yakiimo Ingest Contract
+
+ESP32 → Worker → Supabase 全体を貫く ingest の仕様 (HMAC エンベロープ + 計測ペイロード) を、`contract/` パッケージに TypeScript で 1 箇所定義し、これを唯一の出典 (source of truth) として扱います。ここから C++ ヘッダ・SQL 関数・Markdown 仕様書を機械生成して各層に配布する構成です。詳細は以下を参照してください。
+
+- ドメイン語彙とエンティティ定義: [`docs/CONTEXT.md`](docs/CONTEXT.md)
+- Ingest Contract 仕様書 (auto-generated): [`docs/CONTRACT.md`](docs/CONTRACT.md)
+- 設計判断の記録 (Architecture Decision Records): [`docs/adr/`](docs/adr/)
+- TypeScript 実体: [`contract/src/`](contract/src/) (`envelope.ts`, `payload.ts`)
+
+## Defense in Depth (3 層検証)
+
+ingest リクエストの妥当性検証を 3 層で多重化し、どの層が破られても次の層で止まる構成にしています。
+
+| 層 | 場所 | 役割 | 主な検証 |
+|----|------|------|----------|
+| L1 | Worker (`contract.envelope`) | 外殻 (HMAC エンベロープ) の検証 | 署名一致 / timestamp の許容窓 / バージョン整合 |
+| L2 | Worker (`contract.payload`) | 計測ペイロードの構造検証 | チャンネル数 / 必須フィールド / 型と範囲 |
+| L3 | Supabase (BEFORE INSERT trigger) | DB 入口での最終チェック | service_role を含む全ロールに対して L2 と同等の検証を SQL で再適用 |
+
+L1+L2 は Worker が contract モジュールを呼んで実行し、L3 は migrations 007/008 で導入した SQL 関数 + BEFORE INSERT トリガーが担います。Worker をバイパスして直接 Supabase に書こうとしても、L3 で必ず再検証されます。
 
 ## アーキテクチャ
 
@@ -31,7 +53,8 @@ ESP32 と熱電対 4 本 + 環境センサーで、やきいも(石焼き芋)下
                    v
       +-------------------------------+
       | Cloudflare Worker (worker/)   |
-      | - HMAC 検証                   |
+      | - L1: contract.envelope 検証  |
+      | - L2: contract.payload 検証   |
       | - service_role で Supabase へ |
       +---------------+---------------+
                       |
@@ -41,6 +64,8 @@ ESP32 と熱電対 4 本 + 環境センサーで、やきいも(石焼き芋)下
       | Supabase                      |
       | - yakiimo_temp_logs           |
       | - yakiimo_sessions            |
+      | - L3: BEFORE INSERT trigger   |
+      |       (全ロールで再検証)      |
       | - pg_cron で idle 30min close |
       | - anon: SELECT only           |
       +-------+---------------+-------+
@@ -92,11 +117,12 @@ ESP32 と熱電対 4 本 + 環境センサーで、やきいも(石焼き芋)下
 
 依存順に並べると以下になります。順番を守らないと ESP32 が POST 先を持たないままビルドされる等の不整合が起きます。
 
-1. Supabase プロジェクト作成 + マイグレーション適用
-2. Cloudflare Worker デプロイ (URL を発行)
-3. ESP32 ファームウェア書き込み (Worker URL を `secrets.yaml` に転記)
-4. Cloudflare Pages デプロイ (公開ダッシュボード)
-5. (任意) 管理画面用に Cloudflare Access 設定
+1. Supabase プロジェクト作成 + マイグレーション 001-008 を順番に適用
+2. `contract/` の codegen を実行 (C++ ヘッダ / SQL / Markdown を生成)
+3. Cloudflare Worker デプロイ (URL を発行)
+4. ESP32 ファームウェア書き込み (生成した `contract.generated.h` を include、Worker URL を `secrets.yaml` に転記)
+5. Cloudflare Pages デプロイ (公開ダッシュボード)
+6. (任意) 管理画面用に Cloudflare Access 設定
 
 ## 配線
 
@@ -133,6 +159,8 @@ ESP32 ピン割当:
    - `004_create_yakiimo_sessions.sql` — `yakiimo_sessions` テーブルと公開制御 (`is_public` 排他)
    - `005_setup_auto_close_cron.sql` — pg_cron で idle 30 分のセッションを自動非公開化 (5 分毎)
    - `006_drop_anon_insert.sql` — ESP32 直 INSERT 撤去。以降の INSERT は Worker 経由 (service_role) のみ
+   - `007_contract_functions.sql` — Ingest Contract の検証関数 (auto-generated。`contract/` の codegen 出力をそのまま貼る)
+   - `008_use_contract_functions.sql` — `yakiimo_temp_logs` に BEFORE INSERT トリガーを張り、L3 検証を全ロールで強制
 3. **Project Settings → API** から以下 2 つを控えます。
    - `Project URL` (例: `https://xxxxx.supabase.co`)
    - `anon` `public` key (公開ダッシュボード用、200 文字超の JWT)
@@ -148,9 +176,30 @@ ESP32 ピン割当:
 | `yakiimo_temp_logs` | 5ch × 5 秒間隔の生計測値。Worker 経由でのみ INSERT |
 | `yakiimo_sessions`  | セッションメタ (display_name / purpose / fire_start / brix / notes / `is_public`)。anon は `is_public=true` のみ SELECT 可 |
 
+## Codegen (Ingest Contract)
+
+`contract/` パッケージは TypeScript で書かれた Ingest Contract から、各層が読み込める成果物を機械生成します。Worker をデプロイする前と ESP32 ファームウェアをビルドする前に必ず実行してください。
+
+```bash
+cd contract
+npm install
+npm test          # contract の単体テスト
+npm run codegen   # 3 ファイルを生成
+```
+
+生成物と扱い:
+
+| 出力先 | 用途 | git 管理 |
+|--------|------|----------|
+| `firmware-esphome/contract.generated.h` | ESP32 ファーム (yakiimo.yaml が include) | gitignore (ローカル生成) |
+| `supabase/migrations/007_contract_functions.sql` | Supabase の検証関数 (L3 で使用) | commit する (auto-generated と明記) |
+| `docs/CONTRACT.md` | 公開仕様書 | commit する (auto-generated と明記) |
+
+`contract/src/` を編集したときは必ず `npm run codegen` を再実行し、SQL と Markdown の差分をレビューしてからコミットしてください。Worker は `contract/` を直接 import するので codegen 不要ですが、ESP32 と Supabase 側は生成物経由のため再走が必要です。
+
 ## Cloudflare Worker (ingest)
 
-ESP32 → Worker → Supabase の中継 Worker です。HMAC-SHA256 で ESP32 を認証し、合格時のみ service_role で Supabase REST に転送します。anon INSERT を撤去した代わりに、この Worker が唯一の書き込み経路です。
+ESP32 → Worker → Supabase の中継 Worker です。`contract/` パッケージを直接 import し、L1 (`contract.envelope`: HMAC-SHA256 + timestamp) と L2 (`contract.payload`: 構造・型・範囲) の検証を順に行い、両方合格した場合のみ service_role で Supabase REST に転送します。anon INSERT を撤去した代わりに、この Worker が唯一の書き込み経路です。
 
 ESP32 を書き込む前に Worker をデプロイして URL を確定させてください。順序を逆にすると ESP32 の `secrets.yaml` に入れる Worker URL が決まりません。
 
@@ -213,6 +262,8 @@ cp secrets.yaml.example secrets.yaml
 `secrets.yaml` は `.gitignore` で除外されるためコミットされません。`ingest_hmac_secret` は YAML 解釈時に literal 展開されてバイナリに焼き込まれます。漏洩時は Worker secret と ESP32 を必ず同時にローテーションしてください。
 
 ### 初回書き込み (USB)
+
+ESP32 ファームウェアは `contract.generated.h` を include するため、書き込みの前に必ず `contract/` の codegen を一度走らせてください (前述の Codegen セクション参照)。`firmware-esphome/contract.generated.h` が無い状態でコンパイルすると失敗します。
 
 ESP32 を USB ケーブルで PC に接続して:
 
@@ -365,6 +416,10 @@ select * from cron.job_run_details order by start_time desc limit 5;
 ## 関連ドキュメント
 
 - 配線図 (SVG): [`docs/wiring-diagram.svg`](docs/wiring-diagram.svg)
+- ドメイン辞書 (CONTEXT): [`docs/CONTEXT.md`](docs/CONTEXT.md)
+- Ingest Contract 仕様 (auto-generated): [`docs/CONTRACT.md`](docs/CONTRACT.md)
+- 設計判断記録 (ADR): [`docs/adr/`](docs/adr/)
+- Contract package 実体: [`contract/src/`](contract/src/)
 - ダッシュボード詳細: [`dashboard/README.md`](dashboard/README.md)
 - Worker 詳細: [`worker/README.md`](worker/README.md)
 - DB マイグレーション: [`supabase/migrations/`](supabase/migrations/)
