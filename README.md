@@ -6,45 +6,58 @@ ESP32 と熱電対 4 本 + 環境センサーで、やきいも(石焼き芋)下
 
 - ハードウェア: ESP32-DevKitC-32E + MAX31855 × 4 (K 型熱電対 IC) + BME280 (温湿度気圧 I2C)
 - ファームウェア: ESPHome ベース (`firmware-esphome/yakiimo.yaml`)
-- データ層: Supabase PostgREST + Row Level Security
-- ダッシュボード: Vanilla HTML + Chart.js + supabase-js (Cloudflare Pages にそのままデプロイ可)
+- 中継: Cloudflare Worker (`worker/`) が ESP32 を HMAC-SHA256 で認証し、合格時のみ Supabase へ転送
+- データ層: Supabase PostgREST + Row Level Security (anon は SELECT のみ、INSERT/UPDATE/DELETE は service_role 経由)
+- 公開ダッシュボード: Vanilla HTML + Chart.js + supabase-js (Cloudflare Pages デプロイ)
+- 管理画面: 同じ Pages プロジェクト内に不可視 URL + Cloudflare Access で配置 (オーナーのみ)
+- セッション自動 close: pg_cron が 5 分毎に走り、30 分以上 idle のセッションを `is_public=false` に落とす
 - サンプリング: 全 5 チャンネル 5 秒統一、5 秒ごとに 5 行を 1 回のバッチ POST
 - 計測時間: 1 セッション ≒ 2 時間、データ量 ≒ 14,400 行
-- 操作: ESP32 の Web UI (mDNS `yakiimo-temp-monitor.local`) でセッション ID 変更・現在値確認、OTA で再書き込み
-
-スクリーンショット (※ リポジトリには `*.png` を含めない方針です。試運転時に各自で取得してください)
 
 ## アーキテクチャ
 
 ```
-                +--------------------+
-                |  ESP32-DevKitC-32E |
-                |   ESPHome firmware |
-                +----+----------+----+
-                     | SPI       | I2C
-        +------------+----+   +--+-----+
-        | MAX31855 ×4     |   | BME280 |
-        | (K 熱電対)      |   | (温湿圧)|
-        +-----------------+   +--------+
-                     |
-                     | HTTPS POST (5 行 / 5 秒)
-                     v
-        +-------------------------------+
-        | Supabase                      |
-        | - yakiimo_temp_logs (RLS)     |
-        | - anon: INSERT + SELECT       |
-        +---------------+---------------+
-                        |
-                        | fetch (anon key, RLS で SELECT のみ可)
-                        v
-        +-------------------------------+
-        | Dashboard (静的サイト)        |
-        | Chart.js + supabase-js        |
-        | Cloudflare Pages にデプロイ可 |
-        +-------------------------------+
+              +--------------------+
+              |  ESP32-DevKitC-32E |
+              |   ESPHome firmware |
+              +----+----------+----+
+                   | SPI       | I2C
+      +------------+----+   +--+-----+
+      | MAX31855 ×4     |   | BME280 |
+      | (K 熱電対)      |   | (温湿圧)|
+      +-----------------+   +--------+
+                   |
+                   | HTTPS POST (5 行 / 5 秒, HMAC-SHA256 署名付)
+                   v
+      +-------------------------------+
+      | Cloudflare Worker (worker/)   |
+      | - HMAC 検証                   |
+      | - service_role で Supabase へ |
+      +---------------+---------------+
+                      |
+                      | service_role (RLS bypass)
+                      v
+      +-------------------------------+
+      | Supabase                      |
+      | - yakiimo_temp_logs           |
+      | - yakiimo_sessions            |
+      | - pg_cron で idle 30min close |
+      | - anon: SELECT only           |
+      +-------+---------------+-------+
+              |               |
+              | anon          | service_role (CF Access 通過後のみ)
+              | (is_public    |
+              |  =true のみ)  |
+              v               v
+   +------------------+  +-----------------------+
+   | Live dashboard   |  | Admin (不可視 URL +   |
+   | (CF Pages 公開)  |  |  CF Access)           |
+   | Chart.js + sb-js |  | セッション編集・公開  |
+   +------------------+  |  切替・過去詳細閲覧   |
+                         +-----------------------+
 
-         + ESP32 自体の Web UI (LAN 内、mDNS)
-           http://yakiimo-temp-monitor.local/
+   + ESP32 自体の Web UI (LAN 内、mDNS)
+     http://yakiimo-temp-monitor.local/
 ```
 
 ## 必要なもの
@@ -67,13 +80,23 @@ ESP32 と熱電対 4 本 + 環境センサーで、やきいも(石焼き芋)下
 ### アカウント
 
 - Supabase (Free プランで十分)
-- Cloudflare アカウント (ダッシュボードを Cloudflare Pages に置く場合のみ。任意)
+- Cloudflare アカウント (Workers + Pages、無料枠で十分。管理画面を使う場合は Access も無料枠で可)
 
 ### ソフトウェア
 
 - Python 3.9 以上 (ESPHome 実行用)
 - ESPHome 2024.x 以降 (本リポジトリは 2026 系の `request_headers:` 新方式で書かれています)
-- Node.js 18 以降 + `wrangler` (Cloudflare Pages にデプロイする場合のみ)
+- Node.js 18 以降 + `wrangler` (Worker / Pages デプロイ用)
+
+## セットアップ順序
+
+依存順に並べると以下になります。順番を守らないと ESP32 が POST 先を持たないままビルドされる等の不整合が起きます。
+
+1. Supabase プロジェクト作成 + マイグレーション適用
+2. Cloudflare Worker デプロイ (URL を発行)
+3. ESP32 ファームウェア書き込み (Worker URL を `secrets.yaml` に転記)
+4. Cloudflare Pages デプロイ (公開ダッシュボード)
+5. (任意) 管理画面用に Cloudflare Access 設定
 
 ## 配線
 
@@ -103,31 +126,56 @@ ESP32 ピン割当:
 ## Supabase セットアップ
 
 1. Supabase で新規プロジェクトを作成します。リージョンは利用地域に近いものを選んでください。
-2. Dashboard 左サイドバーの **SQL Editor** を開き、以下 2 ファイルを順番に貼り付けて実行します。
-   - [`supabase/migrations/001_create_yakiimo_temp_logs.sql`](supabase/migrations/001_create_yakiimo_temp_logs.sql) — テーブル `yakiimo_temp_logs` 作成 + インデックス + RLS 有効化 + `anon insert only` ポリシー
-   - [`supabase/migrations/002_add_anon_select.sql`](supabase/migrations/002_add_anon_select.sql) — ダッシュボードからの読取りに必要な `anon select all` ポリシーを追加
+2. Dashboard 左サイドバーの **SQL Editor** で `supabase/migrations/` 配下の SQL を **番号順** に貼り付けて実行します。
+   - `001_create_yakiimo_temp_logs.sql` — `yakiimo_temp_logs` 作成 + RLS 有効化
+   - `002_add_anon_select.sql` — anon SELECT ポリシー (公開ダッシュボード用)
+   - `003_harden_rls.sql` — RLS 強化 (UPDATE/DELETE 不可など)
+   - `004_create_yakiimo_sessions.sql` — `yakiimo_sessions` テーブルと公開制御 (`is_public` 排他)
+   - `005_setup_auto_close_cron.sql` — pg_cron で idle 30 分のセッションを自動非公開化 (5 分毎)
+   - `006_drop_anon_insert.sql` — ESP32 直 INSERT 撤去。以降の INSERT は Worker 経由 (service_role) のみ
 3. **Project Settings → API** から以下 2 つを控えます。
-   - `Project URL` (例: `https://xxxxx.supabase.co`) — `secrets.yaml` の `supabase_url` に設定
-   - `anon` `public` key (200 文字超の JWT) — `secrets.yaml` の `supabase_anon_key` に設定
+   - `Project URL` (例: `https://xxxxx.supabase.co`)
+   - `anon` `public` key (公開ダッシュボード用、200 文字超の JWT)
+   - `service_role` `secret` key (Worker と管理画面用、**漏洩厳禁**)
 4. **Project Settings → API → Max Rows** を 1000 から 50000 に引き上げます。ダッシュボードはセッション全期間 (約 14,400 行) を一括取得して表示するため、デフォルトの 1000 行制限では切れます。
-5. 認証関連 (Authentication) は変更不要です。データの読み書きはすべて anon key + RLS ポリシー経由です。
+
+`pg_cron` 拡張は migration 005 内で `create extension if not exists pg_cron` しているため、Supabase ダッシュボードでの手動有効化は不要です。
 
 テーブル定義の要点 (詳細は SQL ファイル参照):
 
-| カラム | 型 | 説明 |
-|--------|-----|------|
-| `id` | BIGSERIAL PK | 連番 |
-| `measured_at` | TIMESTAMPTZ | 計測時刻 (UTC) |
-| `device_id` | TEXT | デバイス ID (例: `esp32-01`) |
-| `session_id` | TEXT | セッション識別子 (例: `2026-05-04-round1`) |
-| `channel` | TEXT | `potato_internal` / `potato_surface` / `kiln_ambient` / `stone_surface` / `env` |
-| `temp_c` | REAL | 温度 (°C)、欠測時 NULL |
-| `humidity_pct` | REAL | 湿度 (%)、env 行のみ |
-| `pressure_hpa` | REAL | 気圧 (hPa)、env 行のみ |
-| `raw` | JSONB | 予備、現在は未使用 |
-| `ingested_at` | TIMESTAMPTZ | DB 投入時刻 (DEFAULT now()) |
+| テーブル | 役割 |
+|----------|------|
+| `yakiimo_temp_logs` | 5ch × 5 秒間隔の生計測値。Worker 経由でのみ INSERT |
+| `yakiimo_sessions`  | セッションメタ (display_name / purpose / fire_start / brix / notes / `is_public`)。anon は `is_public=true` のみ SELECT 可 |
 
-## ファームウェア
+## Cloudflare Worker (ingest)
+
+ESP32 → Worker → Supabase の中継 Worker です。HMAC-SHA256 で ESP32 を認証し、合格時のみ service_role で Supabase REST に転送します。anon INSERT を撤去した代わりに、この Worker が唯一の書き込み経路です。
+
+ESP32 を書き込む前に Worker をデプロイして URL を確定させてください。順序を逆にすると ESP32 の `secrets.yaml` に入れる Worker URL が決まりません。
+
+```bash
+cd worker
+npm install
+npx wrangler login           # 初回のみ
+npx wrangler deploy
+```
+
+Secrets 登録 (初回 / 値変更時):
+
+```bash
+npx wrangler secret put SUPABASE_URL
+npx wrangler secret put SUPABASE_SERVICE_ROLE_KEY
+npx wrangler secret put INGEST_HMAC_SECRET
+```
+
+`INGEST_HMAC_SECRET` はランダム 32 文字以上 (`openssl rand -hex 32` 等) を生成し、ESP32 側 `secrets.yaml` の `ingest_hmac_secret` と完全同値にします。
+
+デプロイ後に発行される URL (例 `https://yakiimo-ingest.<account>.workers.dev`) を控え、次節の `secrets.yaml` の `ingest_worker_url` に転記します。
+
+詳細・動作確認 curl・エラー応答仕様は [`worker/README.md`](worker/README.md) を参照してください。
+
+## ファームウェア (ESP32)
 
 ### ESPHome のインストール
 
@@ -156,11 +204,13 @@ cp secrets.yaml.example secrets.yaml
 | `ota_password` | OTA 書き込み時のパスワード (任意) |
 | `web_username` / `web_password` | ESP32 Web UI の Basic 認証 |
 | `supabase_url` | Supabase Project URL (末尾に `/` や `/rest/v1` を付けない) |
-| `supabase_anon_key` | Supabase anon public key |
+| `supabase_anon_key` | Supabase anon public key (Web UI 表示用、INSERT には使わない) |
+| `ingest_worker_url` | Cloudflare Worker の URL (例 `https://yakiimo-ingest.<account>.workers.dev`、末尾の `/ingest` は YAML 側で付与) |
+| `ingest_hmac_secret` | Worker の `INGEST_HMAC_SECRET` と完全同値 |
 | `session_id` | 計測セッションのラベル初期値。後で Web UI から変更可で NVS に永続化される |
 | `brand_name` | 屋号 / 店名。Web UI とダッシュボードのタイトルに表示される。空欄でも可 |
 
-`secrets.yaml` は `.gitignore` で除外されるためコミットされません。
+`secrets.yaml` は `.gitignore` で除外されるためコミットされません。`ingest_hmac_secret` は YAML 解釈時に literal 展開されてバイナリに焼き込まれます。漏洩時は Worker secret と ESP32 を必ず同時にローテーションしてください。
 
 ### 初回書き込み (USB)
 
@@ -179,15 +229,17 @@ esphome run yakiimo.yaml
 
 - `[I][wifi:xxx]: WiFi Connected!` — WiFi 接続成功
 - `[I][time:xxx]: Synchronized time: ...` — NTP 同期成功
-- `[D][http_request:xxx]: ... Code: 201` — Supabase への INSERT 成功
+- `[I][yakiimo]: ingest POST OK (5 rows)` — Worker への 201 応答 (= Supabase INSERT 成功)
 
-ブラウザで以下にアクセスすると Web UI が開き、Basic 認証ののち全センサーの現在値・WiFi 接続情報・セッション ID が表示されます。
+ブラウザで以下にアクセスすると Web UI が開き、Basic 認証ののち全センサーの現在値・WiFi 接続情報・セッション ID・「DB保存」スイッチが表示されます。
 
 ```
 http://yakiimo-temp-monitor.local/
 ```
 
 mDNS が解決できない環境では、シリアルログの `IP Address:` 行で IP を確認して直打ちしてください。
+
+「DB保存」スイッチを OFF にすると Worker への POST が止まります (試運転や配線確認用)。
 
 ### セッション ID の変更
 
@@ -208,105 +260,92 @@ esphome run yakiimo.yaml
 
 `secrets.yaml` を編集した場合は `esphome upload` ではなく必ず `esphome run` を使ってください。`!secret` と `substitutions:` は YAML 解釈時に静的展開されてバイナリに焼き込まれるため、再コンパイルが必要です。
 
-## ダッシュボード
+## ダッシュボード (公開)
 
-### ローカル確認
-
-```bash
-cd dashboard
-cp main.js.example main.js
-```
-
-`main.js` 冒頭の以下 3 定数を実値に書き換えます (`secrets.yaml` と同じ値で OK)。
-
-```javascript
-const SUPABASE_URL = "https://YOUR_PROJECT.supabase.co";
-const SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_KEY";
-const BRAND_NAME = "[屋号]";
-```
-
-その上で簡易 HTTP サーバを立てます (`file://` 直開きでも動きますが、将来追加機能で fetch を使う場合に備えて HTTP サーバ起動を推奨)。
-
-```bash
-python3 -m http.server 8000
-# ブラウザで http://localhost:8000/ を開く
-```
+公開向け live ダッシュボードは Cloudflare Pages にデプロイします。`yakiimo_sessions.is_public = true` のセッションのみ表示されます。
 
 ### Cloudflare Pages 自動デプロイ (推奨)
 
 GitHub リポを Cloudflare Pages に接続すると、main ブランチへの push で自動デプロイされます。
 
 1. Cloudflare Dashboard → Workers & Pages → Create application → Pages → Connect to Git
-2. リポジトリ `panp2000/yakiimo-temp-monitor` を選択
+2. 本リポジトリを選択
 3. Build settings:
    - Build command: `cd dashboard && bash build.sh`
    - Build output directory: `dashboard`
 4. Environment variables (Production):
+
+   必須:
    - `SUPABASE_URL`
    - `SUPABASE_ANON_KEY`
    - `BRAND_NAME`
 
-   オプション (未設定時は SNS / ブログ誘導 CTA の該当リンクが表示されません):
-   - `SOCIAL_TWITTER`   — X (Twitter) URL (例: `https://x.com/your_handle`)
-   - `SOCIAL_INSTAGRAM` — Instagram URL (例: `https://www.instagram.com/your_handle/`)
-   - `SOCIAL_BLOG`      — ブログ URL (note / WordPress / 自前ブログ等)
+   管理画面を使う場合は併せて必須 (詳細は次節):
+   - `ADMIN_FILENAME`
+   - `SUPABASE_SERVICE_ROLE_KEY`
+
+   任意 (未設定時はダッシュボードの SNS / ブログ誘導 CTA が非表示):
+   - `SOCIAL_TWITTER`
+   - `SOCIAL_INSTAGRAM`
+   - `SOCIAL_BLOG`
 5. Save and Deploy
 
-以降、main へ push すると自動で再デプロイされます。ビルド時は [`dashboard/build.sh`](dashboard/build.sh) が `main.js.example` から `main.js` を生成します。env vars 未設定 / プレースホルダ残留はビルド失敗で誤公開を防ぎます。
+[`dashboard/build.sh`](dashboard/build.sh) が `main.js.example` から `main.js` を生成し、env 値を埋め込みます。env 未設定 / プレースホルダ残留はビルド失敗で誤公開を防ぎます。
 
-### 管理画面 (Admin) のセットアップ
+ローカル確認手順は [`dashboard/README.md`](dashboard/README.md) を参照してください。
 
-オーナー専用の管理画面を不可視 URL + Cloudflare Access の二重防御で運用します。
-公開しないため任意のオーナーのみ追加してください。
+### 緊急時の手動デプロイ
 
-1. Cloudflare Pages → Settings → Environment variables に追加 (Production):
-   - `ADMIN_FILENAME` = `xxxxxxx-admin` (推測不可な文字列、英小文字・数字・ハイフンのみ)
-     この値が URL に直接入るため、漏洩防止のため env で管理します。
-   - `SUPABASE_SERVICE_ROLE_KEY` = Supabase Dashboard → Project Settings → API → `service_role` `secret` key
-     (200 文字超の JWT、`anon` key とは別物)。**SECRET 扱い**。
-     この key は CF Pages の env にのみ保存し、絶対に repo にコミットしないこと。
-     CF Access で gate された管理画面 file (`${ADMIN_FILENAME}.html`) 内に build 時に
-     埋込まれ、RLS を bypass して `yakiimo_sessions` を操作するために使用します。
-     `ADMIN_FILENAME` を設定する場合は本 key も必須 (build.sh が起動時に検証)。
-
-2. 再 deploy 後、Cloudflare Dashboard → Workers & Pages → `yakiimo-temp-monitor`
-   → 同じ project 内の Cloudflare Access 設定:
-   - Access → Applications → Add an application → Self-hosted
-   - Application name: `yakiimo-admin`
-   - Application domain: `yakiimo-temp-monitor.sai-kachi.workers.dev`
-   - Path: `/${ADMIN_FILENAME}.html` (実値で記載)
-   - Identity providers: One-time PIN (メール) または Google などお好みで
-   - Policy: Include - Emails - `your@email.com`
-3. アクセス時は `https://yakiimo-temp-monitor.sai-kachi.workers.dev/${ADMIN_FILENAME}.html`
-   をブラウザで開く。Access による認証画面 → 通過 → 管理画面表示。
-
-ファイル名を変更したい場合は env を書き換えて再 deploy、Access ポリシーの Path も更新。
-古い URL は build 時に再生成されないため自動的に 404 になります。
-
-### Cloudflare Pages 手動デプロイ (緊急時用)
-
-GitHub 連携が使えない場合のフォールバック。`secrets.yaml` から `main.js` への値同期 + `wrangler` でのデプロイを一括実行するスクリプトを同梱しています。
+GitHub 連携が使えない場合のフォールバック。`secrets.yaml` の値を `main.js` に同期してから `wrangler` でデプロイするスクリプトを同梱しています。
 
 ```bash
 bash scripts/deploy-dashboard.sh
 ```
 
-手動でデプロイする場合は:
+## 管理画面 (Admin)
 
-```bash
-npm install -g wrangler
-wrangler login
-wrangler pages deploy dashboard --project-name yakiimo-temp-monitor
+オーナー専用の管理画面を **不可視 URL + Cloudflare Access** の二重防御で運用します。同じ Pages プロジェクト内に別ファイルとして置き、URL を知る者のみ Access の認証画面に到達できる構成です。
+
+### 機能
+
+- セッション一覧 (公開中・非公開を含む全件)
+- `is_public` 切替 (1 セッションのみ公開可、排他は DB 制約で保証)
+- セッションメタの編集 (`display_name` / `purpose` / `fire_start` / `notes` / `brix`)
+- 過去セッションの詳細閲覧 (anon 公開していない `is_public=false` 含む)
+
+### セットアップ
+
+1. Cloudflare Pages → Settings → Environment variables (Production) に追加:
+   - `ADMIN_FILENAME` = `xxxxxxx-admin` 等の推測不可な文字列 (英小文字・数字・ハイフンのみ、拡張子なし)。この値が URL のファイル名に直接入ります。
+   - `SUPABASE_SERVICE_ROLE_KEY` = Supabase Project Settings → API → `service_role` `secret` key。**SECRET 扱い**で repo にコミットしないこと。
+2. 再デプロイすると `dashboard/admin.template.html` から `${ADMIN_FILENAME}.html` が生成されます (build.sh が起動時に検証、両方揃っていないと失敗)。
+3. Cloudflare Dashboard → Zero Trust → Access → Applications → Add an application → Self-hosted:
+   - Application domain: Pages のドメイン
+   - Path: `/${ADMIN_FILENAME}.html` (実値で記載)
+   - Identity providers: One-time PIN (メール) または Google など
+   - Policy: Include - Emails - 自分のメールアドレス
+4. アクセス時は `https://<pages-domain>/${ADMIN_FILENAME}.html` を開く → Access 認証画面 → 通過 → 管理画面表示
+
+ファイル名を変更したい場合は `ADMIN_FILENAME` を書き換えて再デプロイし、Access ポリシーの Path も更新します。古いファイル名はビルドで再生成されないため自動的に 404 になります。
+
+## セッション自動 close (pg_cron)
+
+Migration 005 が pg_cron ジョブを 5 分毎に走らせ、最後の `yakiimo_temp_logs` 投入から 30 分以上経過したセッションを `is_public = false` に落とします。ESP32 を切り忘れて公開し続ける事故の保険です。手動で公開し直すには管理画面から `is_public` を切替えます。
+
+cron ジョブの状態確認:
+
+```sql
+select * from cron.job where jobname = 'yakiimo_close_idle_sessions';
+select * from cron.job_run_details order by start_time desc limit 5;
 ```
-
-詳細は [`dashboard/README.md`](dashboard/README.md) を参照してください。
 
 ## 動作確認の流れ
 
-1. ESP32 Web UI で 5 つの温度値・湿度・気圧・WiFi RSSI・現在の SSID/IP・セッション ID が表示されること。
-2. Supabase Dashboard → Table Editor → `yakiimo_temp_logs` で 5 秒ごとに 5 行ずつ追加されていること。`scripts/check_data.sh` を実行すると最新 50 行が確認できます。
-3. ダッシュボード (ローカル http://localhost:8000/ または Cloudflare Pages) で 5 チャンネルの折れ線グラフが描画され、5 秒ごとに更新されること。
-4. ライターで熱電対の先端を炙ると、該当 ch の温度カードと折れ線が応答して上昇すること。
+1. ESP32 Web UI で 5 つの温度値・湿度・気圧・WiFi RSSI・現在の SSID/IP・セッション ID・「DB保存」スイッチが表示されること。
+2. `wrangler tail` (worker/) で Worker に POST が届き、201 を返していること。
+3. Supabase Dashboard → Table Editor → `yakiimo_temp_logs` で 5 秒ごとに 5 行ずつ追加されていること (`scripts/check_data.sh` で最新 50 行確認可)。
+4. `yakiimo_sessions` に当該 `session_id` 行が存在し、管理画面から `is_public=true` にすると公開ダッシュボードに 5 秒ごとに更新される折れ線グラフが描画されること。
+5. ライターで熱電対の先端を炙ると、該当 ch の温度カードと折れ線が応答して上昇すること。
 
 ## トラブルシューティング
 
@@ -315,9 +354,11 @@ wrangler pages deploy dashboard --project-name yakiimo-temp-monitor
 | `MAX31855 init failed` | CS ピンの配線間違い、3V3 欠落。クローン基板でプルアップ未実装が疑われる場合は CS×4 + SO 共通に 10kΩ プルアップ後付け |
 | 温度値がガタガタ揺れる | 各 MAX31855 の T+/T- 間に 10nF が挿さっているか確認 |
 | 1 ch だけ NaN | 熱電対の断線、または極性逆 (赤を T+ に) |
-| Supabase POST が `Code: 401` | `secrets.yaml` の `supabase_anon_key` がプレースホルダのまま。200 字超の本物の JWT に書き換える |
-| Supabase POST が `Code: 403` | RLS の `anon insert only` ポリシーが投入されていない。`001_create_yakiimo_temp_logs.sql` を再実行 |
-| ダッシュボードが空 | `002_add_anon_select.sql` を実行したか、Max Rows を 50000 に上げたか確認 |
+| ESP32 ログに `ingest POST failed status=401` | Worker と ESP32 で `INGEST_HMAC_SECRET` / `ingest_hmac_secret` が一致していない、もしくは ESP32 の時刻が NTP 同期前 (timestamp が範囲外) |
+| ESP32 ログに `ingest POST failed status=415/400` | リクエスト形式不正。yakiimo.yaml を改造した場合のみ起こり得る (詳細は worker/README.md) |
+| ESP32 ログに `ingest POST failed status=502` | Worker は受理したが Supabase へ転送失敗。Worker の secret (`SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY`) を確認 |
+| ダッシュボードが空 | `is_public=true` のセッションが無い (管理画面で切替)、または Max Rows を 50000 に上げ忘れ |
+| 公開セッションが勝手に消える | pg_cron の 30 分 idle 自動 close。意図的に止めたい場合は migration 005 の cron job を `cron.unschedule()` |
 | WiFi に繋がらない | AP モード `Yakiimo Fallback` に降格しているはず。スマホで接続後 captive portal で再設定 |
 | OTA に失敗する | `ping yakiimo-temp-monitor.local` で mDNS 解決確認。失敗するなら Web UI の「IP アドレス」を見て `--device <IP>` 指定 |
 
@@ -325,6 +366,8 @@ wrangler pages deploy dashboard --project-name yakiimo-temp-monitor
 
 - 配線図 (SVG): [`docs/wiring-diagram.svg`](docs/wiring-diagram.svg)
 - ダッシュボード詳細: [`dashboard/README.md`](dashboard/README.md)
+- Worker 詳細: [`worker/README.md`](worker/README.md)
+- DB マイグレーション: [`supabase/migrations/`](supabase/migrations/)
 
 ## ライセンス
 
