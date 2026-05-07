@@ -28,3 +28,10 @@ worker/.wrangler/
 
 # Supabase CLI キャッシュ
 supabase/.temp/
+
+# contract package
+contract/node_modules/
+contract/dist/
+
+# root workspace
+node_modules/

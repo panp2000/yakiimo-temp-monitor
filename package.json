@@ -1,0 +1,8 @@
+{
+  "name": "yakiimo-temp-monitor",
+  "private": true,
+  "workspaces": [
+    "contract",
+    "worker"
+  ]
+}
