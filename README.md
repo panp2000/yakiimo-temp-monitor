@@ -49,6 +49,12 @@ Cloudflare Worker の `verifyEnvelope` は `SUPPORTED_VERSIONS` 配列を持ち�
 
 の 4 段階で migrate 可能です。
 
+### Display layer deepening
+
+Live ダッシュボードと管理画面の間で重複していた median3Filter / Channel display metadata / Chart.js dataset 構築ロジックを `dashboard-shared/` ワークスペースに集約しています。Channel キー自体は `contract` パッケージに source of truth があり、表示用メタデータ (label / icon / CSS variable 名) のみを上に重ねる構造です。Chart.js options (legend / tooltip / scales) は live と admin で意図的に divergent ゆえ共通化スコープからは外しています — 責務単位で seam が立つ deepening pattern を contract と display の両方で踏襲しています。
+
+Bundle は esbuild の IIFE 形式で `window.YakiimoDashboard.*` をグローバル露出するため、admin の inline `<script>` からも特別な読み込みなしで参照できます。`dashboard/build.sh` が `dashboard-shared/dist/dashboard-shared.js` を Pages 出力ディレクトリにコピーし、`index.html` と admin HTML がルート絶対パス `/dashboard-shared.js` で読み込みます。
+
 ## アーキテクチャ
 
 ```
@@ -136,6 +142,10 @@ Cloudflare Worker の `verifyEnvelope` は `SUPPORTED_VERSIONS` 配列を持ち�
 4. ESP32 ファームウェア書き込み (生成した `contract.generated.h` を include、Worker URL を `secrets.yaml` に転記)
 5. Cloudflare Pages デプロイ (公開ダッシュボード)
 6. (任意) 管理画面用に Cloudflare Access 設定
+
+### npm workspaces
+
+本リポジトリは npm workspaces を使った monorepo 構成です。リポジトリルートで一度 `npm install` を実行すれば、`contract/`、`dashboard-shared/`、`worker/` の 3 ワークスペースの依存がまとめて解決されます。各ワークスペースに個別に `npm install` する必要はありません。
 
 ## 配線
 
