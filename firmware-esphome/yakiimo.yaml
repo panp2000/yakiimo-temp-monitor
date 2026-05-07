@@ -21,6 +21,10 @@ substitutions:
   # lambda 内で参照するため substitutions に置く(!secret は lambda から直接参照できないため)
   supabase_url: !secret supabase_url
   supabase_anon_key: !secret supabase_anon_key
+  # Cloudflare Worker (Phase 8) - ESP32 → Worker → Supabase 中継先
+  ingest_worker_url: !secret ingest_worker_url
+  # HMAC-SHA256 共有秘密 (Worker の INGEST_HMAC_SECRET と完全同値)
+  ingest_hmac_secret: !secret ingest_hmac_secret
   # 屋号 (店名)。Web UI / friendly_name に表示する
   brand_name: !secret brand_name
 
@@ -31,6 +35,9 @@ esphome:
   project:
     name: "mycompany.yakiimo-temp-monitor"
     version: "0.2.0-esphome"
+  # Phase 8: HMAC-SHA256 計算用 helper (mbedtls ベース) を取り込む
+  includes:
+    - hmac_helper.h
 
 esp32:
   board: esp32dev
@@ -193,75 +200,116 @@ text:
     min_length: 1
     max_length: 64
 
+# --- Globals (lambda 間で値共有) ---
+# Phase 8: post_batch 内で body / timestamp / signature を計算 → http_request の
+# 各ヘッダ・body lambda がここから参照する (lambda 間で文字列を受け渡す唯一の手段)。
+globals:
+  - id: g_post_body
+    type: std::string
+    restore_value: false
+  - id: g_post_ts
+    type: std::string
+    restore_value: false
+  - id: g_post_sig
+    type: std::string
+    restore_value: false
+
+# --- DB 保存スイッチ ---
+# Phase 8: Web UI から ON/OFF 切替可。OFF の間は Worker への POST を行わない
+# (センサーは継続稼働)。NVS 永続化、デフォルト ON。
+switch:
+  - platform: template
+    name: "DB保存"
+    id: db_store_enabled
+    icon: mdi:database
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+
 # --- バッチ POST スクリプト ---
-# 5s 毎に lambda で 5ch の state を読み、JSON 配列 (5行同一キー) を組み立てて
-# Supabase REST API へ 1 回 POST する。mode: single なので走行中の重複呼び出しは
-# drop され、その 5 秒分のデータは欠測として許容する (頻度低いので問題なし)。
+# 5s 毎に DB 保存 switch を確認 → ON なら lambda で 5ch の state を読み、
+# JSON 配列 (5行同一キー) を組み立てて Cloudflare Worker (HMAC 認証) へ POST する。
+# Worker が Supabase Service Role Key で安全に INSERT する設計 (Phase 8)。
+# mode: single なので走行中の重複呼び出しは drop され、その 5 秒分のデータは
+# 欠測として許容する (頻度低いので問題なし)。
 script:
   - id: post_batch
     mode: single
     then:
-      - http_request.post:
-          url: !lambda |-
-            return std::string("${supabase_url}") + "/rest/v1/yakiimo_temp_logs";
-          request_headers:
-            Content-Type: application/json
-            apikey: !secret supabase_anon_key
-            Authorization: "Bearer ${supabase_anon_key}"
-            Prefer: return=minimal
-          body: !lambda |-
-            // 全 5ch 共通の measured_at (POST 構築時刻、5秒に1回ゆえ十分整合)
-            auto t = id(sntp_time).now();
-            char ts[32];
-            snprintf(ts, sizeof(ts), "%04d-%02d-%02dT%02d:%02d:%02dZ",
-                     t.year, t.month, t.day_of_month,
-                     t.hour, t.minute, t.second);
+      - if:
+          condition:
+            switch.is_on: db_store_enabled
+          then:
+            # body + timestamp + HMAC を一括計算して globals に格納
+            - lambda: |-
+                auto t = id(sntp_time).now();
+                char ts_iso[32];
+                snprintf(ts_iso, sizeof(ts_iso), "%04d-%02d-%02dT%02d:%02d:%02dZ",
+                         t.year, t.month, t.day_of_month,
+                         t.hour, t.minute, t.second);
 
-            // NaN 安全な数値整形
-            auto fmt = [](float v) -> std::string {
-              if (isnan(v)) return std::string("null");
-              char buf[32];
-              snprintf(buf, sizeof(buf), "%.3f", v);
-              return std::string(buf);
-            };
+                // NaN 安全な数値整形
+                auto fmt = [](float v) -> std::string {
+                  if (isnan(v)) return std::string("null");
+                  char buf[32];
+                  snprintf(buf, sizeof(buf), "%.3f", v);
+                  return std::string(buf);
+                };
 
-            // 4 熱電対 + env を 5行配列で構築 (キー集合は全行で統一)
-            std::string body = std::string("[");
-            const char* tc_ch[4] = {"potato_internal", "potato_surface", "kiln_ambient", "stone_surface"};
-            float tc_v[4] = {
-              id(potato_internal).state,
-              id(potato_surface).state,
-              id(kiln_ambient).state,
-              id(stone_surface).state
-            };
-            for (int i = 0; i < 4; i++) {
-              if (i > 0) body += ",";
-              body += "{\"device_id\":\"${device_id}\",";
-              body += "\"session_id\":\"" + id(session_id_var).state + "\",";
-              body += "\"measured_at\":\"" + std::string(ts) + "\",";
-              body += "\"channel\":\"" + std::string(tc_ch[i]) + "\",";
-              body += "\"temp_c\":" + fmt(tc_v[i]) + ",";
-              body += "\"humidity_pct\":null,\"pressure_hpa\":null}";
-            }
-            // env 行 (humidity_pct, pressure_hpa 込み)
-            body += ",{\"device_id\":\"${device_id}\",";
-            body += "\"session_id\":\"" + id(session_id_var).state + "\",";
-            body += "\"measured_at\":\"" + std::string(ts) + "\",";
-            body += "\"channel\":\"env\",";
-            body += "\"temp_c\":" + fmt(id(env_temp).state) + ",";
-            body += "\"humidity_pct\":" + fmt(id(env_humid).state) + ",";
-            body += "\"pressure_hpa\":" + fmt(id(env_press).state) + "}";
-            body += "]";
-            return body;
-          on_response:
-            then:
-              - lambda: |-
-                  if (response->status_code >= 200 && response->status_code < 300) {
-                    ESP_LOGI("yakiimo", "batch POST OK (5 rows)");
-                  } else {
-                    ESP_LOGW("yakiimo", "batch POST failed status=%d", response->status_code);
-                  }
-          capture_response: false
+                // 4 熱電対 + env を 5行配列で構築 (キー集合は全行で統一)
+                std::string body = std::string("[");
+                const char* tc_ch[4] = {"potato_internal", "potato_surface", "kiln_ambient", "stone_surface"};
+                float tc_v[4] = {
+                  id(potato_internal).state,
+                  id(potato_surface).state,
+                  id(kiln_ambient).state,
+                  id(stone_surface).state
+                };
+                for (int i = 0; i < 4; i++) {
+                  if (i > 0) body += ",";
+                  body += "{\"device_id\":\"${device_id}\",";
+                  body += "\"session_id\":\"" + id(session_id_var).state + "\",";
+                  body += "\"measured_at\":\"" + std::string(ts_iso) + "\",";
+                  body += "\"channel\":\"" + std::string(tc_ch[i]) + "\",";
+                  body += "\"temp_c\":" + fmt(tc_v[i]) + ",";
+                  body += "\"humidity_pct\":null,\"pressure_hpa\":null}";
+                }
+                // env 行 (humidity_pct, pressure_hpa 込み)
+                body += ",{\"device_id\":\"${device_id}\",";
+                body += "\"session_id\":\"" + id(session_id_var).state + "\",";
+                body += "\"measured_at\":\"" + std::string(ts_iso) + "\",";
+                body += "\"channel\":\"env\",";
+                body += "\"temp_c\":" + fmt(id(env_temp).state) + ",";
+                body += "\"humidity_pct\":" + fmt(id(env_humid).state) + ",";
+                body += "\"pressure_hpa\":" + fmt(id(env_press).state) + "}";
+                body += "]";
+
+                // Unix epoch (秒) — SNTP の time_t を使う
+                std::string ts_unix = std::to_string(static_cast<unsigned long long>(t.timestamp));
+
+                // HMAC-SHA256 (hmac_helper.h)。secret は yaml 解析時に literal 展開される
+                std::string sig = yakiimo_hmac_sha256_hex("${ingest_hmac_secret}", ts_unix + "\n" + body);
+
+                // globals に格納 (http_request の per-header / per-body lambda が参照)
+                id(g_post_body) = body;
+                id(g_post_ts)   = ts_unix;
+                id(g_post_sig)  = sig;
+            - http_request.post:
+                url: !lambda |-
+                  return std::string("${ingest_worker_url}") + "/ingest";
+                headers:
+                  Content-Type: application/json
+                  X-Yakiimo-Timestamp: !lambda 'return id(g_post_ts);'
+                  X-Yakiimo-Signature: !lambda 'return id(g_post_sig);'
+                body: !lambda 'return id(g_post_body);'
+                on_response:
+                  then:
+                    - lambda: |-
+                        if (response->status_code >= 200 && response->status_code < 300) {
+                          ESP_LOGI("yakiimo", "ingest POST OK (5 rows)");
+                        } else {
+                          ESP_LOGW("yakiimo", "ingest POST failed status=%d", response->status_code);
+                        }
+                capture_response: false
 
 # --- 定期トリガー ---
 interval:
