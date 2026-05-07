@@ -291,7 +291,7 @@ script:
 
                 // Stage 9-E: 署名対象 message は contract module 由来の helper で構築する。
                 // 形式: `${version}\n${ts_unix}\n${body}` (contract.generated.h)
-                std::string msg = yakiimo_build_signed_message(static_cast<unsigned long>(t.timestamp), body);
+                std::string msg = yakiimo_build_signed_message(static_cast<unsigned long long>(t.timestamp), body);
 
                 // HMAC-SHA256 (hmac_helper.h)。secret は yaml 解析時に literal 展開される
                 std::string sig = yakiimo_hmac_sha256_hex("${ingest_hmac_secret}", msg);

@@ -1,7 +1,6 @@
 import {
   TIMESTAMP_HEADER,
   SIGNATURE_HEADER,
-  CONTRACT_VERSION,
   verifyEnvelope,
 } from "@yakiimo/contract/envelope";
 import { validateLogRow } from "@yakiimo/contract/payload";
@@ -47,7 +46,6 @@ export default {
     // Layer 1: Envelope 検証 (HMAC + timestamp tolerance + version)
     const envelopeResult = await verifyEnvelope({
       secret: env.INGEST_HMAC_SECRET,
-      version: CONTRACT_VERSION,
       timestamp: ts,
       signature: sigHeader,
       body,
@@ -56,14 +54,15 @@ export default {
     if (!envelopeResult.ok) {
       console.warn(`envelope rejected: ${envelopeResult.error} ts=${ts}`);
       switch (envelopeResult.error) {
-        case "version_unsupported":
-          return new Response("Contract version unsupported", { status: 401 });
         case "timestamp_out_of_range":
           return new Response("Timestamp out of range", { status: 401 });
         case "signature_mismatch":
           return new Response("Invalid signature", { status: 401 });
       }
     }
+    // type narrow: 上の if/switch 全 error case が return 抜けるため
+    // ここでは envelopeResult.ok === true が確定し version にアクセス可能
+    const acceptedVersion = envelopeResult.version;
 
     // Layer 2: Payload 検証 (LogRow array)
     let parsed: unknown;
@@ -108,7 +107,7 @@ export default {
       return new Response(`Upstream error: ${upstream.status}`, { status: 502 });
     }
 
-    console.log(`ingest OK rows=${parsed.length} body_len=${body.length}`);
+    console.log(`ingest OK version=${acceptedVersion} rows=${parsed.length} body_len=${body.length}`);
     return new Response(null, { status: upstream.status });
   },
 };
