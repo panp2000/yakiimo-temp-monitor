@@ -4,5 +4,8 @@
   "workspaces": [
     "contract",
     "worker"
-  ]
+  ],
+  "scripts": {
+    "codegen": "npm run codegen --workspace=contract"
+  }
 }
