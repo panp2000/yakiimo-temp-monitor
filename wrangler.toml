@@ -1,0 +1,14 @@
+# yakiimo-temp-monitor — dashboard Worker (Static Assets 配信)
+#
+# CF dashboard 側の Workers Build で deploy command (例: npx wrangler versions upload)
+# が起動した時、本ファイルから project 名と assets directory を読み取る。
+# この設定は CF dashboard の auto-config に頼らず、repo を source of truth とする
+# ための明示化 (172478a 以降の build 失敗を踏まえての対応)。
+#
+# 別 Worker `yakiimo-ingest` (ESP32 ingest 用) は worker/wrangler.toml で別途管理。
+
+name = "yakiimo-temp-monitor"
+compatibility_date = "2026-05-06"
+
+[assets]
+directory = "./dashboard"

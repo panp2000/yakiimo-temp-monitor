@@ -8,5 +8,8 @@
   ],
   "scripts": {
     "codegen": "npm run codegen --workspace=contract"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
   }
 }
