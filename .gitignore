@@ -1,6 +1,7 @@
 # secrets (never commit)
 firmware-esphome/secrets.yaml
 dashboard/main.js
+dashboard/dashboard-shared.js
 
 # ESPHome build artifacts
 firmware-esphome/.esphome/

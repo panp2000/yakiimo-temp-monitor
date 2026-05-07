@@ -45,19 +45,11 @@ const LIVE_THRESHOLD_MS  = 5 * 60 * 1000;        // 5分以内 → live
 const STALE_LIVE_MS      = 60 * 60 * 1000;       // 1時間以内 → stale (まだ更新を続ける)
                                                  // それを超えると offline (ポーリング停止)
 
-// チャネル定義(順序・ラベル・CSS変数名)
-// key:     Supabase クエリで使う内部識別子 (変更禁止)
-// label:   チャート凡例で使う英語ラベル (互換性のため残す)
-// display: UI 表示用の日本語ラベル
-// icon:    カードに表示する漢字 1文字 (絵文字不使用)
-// varName: CSS variable 名 (テーマ切替で色を引く)
-const CHANNELS = [
-  { key: "potato_internal", label: "Potato Internal", display: "芋 内部温度", icon: "内", varName: "--color-ch-potato-internal" },
-  { key: "potato_surface",  label: "Potato Surface",  display: "芋 表面温度", icon: "皮", varName: "--color-ch-potato-surface"  },
-  { key: "kiln_ambient",    label: "Kiln Ambient",    display: "釜内部温度", icon: "釜", varName: "--color-ch-kiln-ambient"    },
-  { key: "stone_surface",   label: "Stone Surface",   display: "石 表面温度", icon: "石", varName: "--color-ch-stone-surface"   },
-  { key: "env",             label: "Environment",     display: "気温",        icon: "外", varName: "--color-ch-env"             },
-];
+// チャネル定義は dashboard-shared から借用 (window.YakiimoDashboard 経由)
+// CHANNEL_DISPLAY の field は { key, label, icon, varName }。
+// 旧 ch.display は label に統合された (UI 用日本語ラベル)。
+const CHANNELS = window.YakiimoDashboard.CHANNEL_DISPLAY;
+const channelDisplayByKey = Object.fromEntries(CHANNELS.map((c) => [c.key, c]));
 
 // 温度以外の追加メトリクス (env レコードから抽出してカード表示。チャートには載せない)
 // source: latest map のキー (channel 値) / field: 行内のフィールド名
@@ -67,27 +59,8 @@ const EXTRA_METRICS = [
 ];
 
 // --------------------------- 表示用フィルタ ---------------------------
-// 3点中央値フィルタ (表示用、データ層は無加工)
+// 3点中央値フィルタは dashboard-shared に集約済 (window.YakiimoDashboard.median3Filter)。
 // MAX31855 の量子化ジッタ (±0.25°C / 1 LSB) を視覚的に除去するためにのみ使う。
-// 入力: [{x: ts, y: val}, ...] 形式の配列 (生データ)
-// 出力: 同形式・同長の新配列。各 y は自身 + 前後 1 点の中央値。
-// 両端 (i=0, i=末尾) は隣接 1 点との 2 値だけで中央値を取る (= 平均と等価)。
-// 中央値ゆえ平均フィルタのような遅延は発生せず、急変への追従性は維持される。
-function median3Filter(points) {
-  if (!points || points.length < 3) return points ? points.slice() : points;
-  const out = new Array(points.length);
-  for (let i = 0; i < points.length; i++) {
-    const a = points[Math.max(0, i - 1)].y;
-    const b = points[i].y;
-    const c = points[Math.min(points.length - 1, i + 1)].y;
-    const sorted = [a, b, c].filter(v => v != null && !isNaN(v)).sort((x, y) => x - y);
-    out[i] = {
-      x: points[i].x,
-      y: sorted.length === 0 ? null : sorted[Math.floor(sorted.length / 2)],
-    };
-  }
-  return out;
-}
 
 // --------------------------- DOM 参照 ---------------------------
 const $cards            = document.getElementById("current-cards");
@@ -410,7 +383,7 @@ function buildCards() {
     el.innerHTML = `
       <div class="card-label">
         <span class="card-icon" aria-hidden="true">${ch.icon || ""}</span>
-        <span class="card-name">${ch.display}</span>
+        <span class="card-name">${ch.label}</span>
       </div>
       <div class="card-value">
         <span class="card-number">--</span>
@@ -471,23 +444,30 @@ function initChart() {
   Chart.defaults.borderColor = withAlpha(ink, 0.06);
   Chart.defaults.font.family = '"Zen Maru Gothic", "Hiragino Maru Gothic ProN", sans-serif';
 
-  const datasets = CHANNELS.map((ch) => {
-    const color = getThemeColor(ch.varName);
-    return {
-      label: ch.display,
-      data: [],
-      borderColor: color,
-      backgroundColor: withAlpha(color, 0.10),
+  // dashboard-shared の buildDatasets で共通プロパティを構築。
+  // 初期 data は空ゆえ median 不要 (applyMedian: false)。
+  // pointHover* (テーマ依存) は後で forEach で個別に上書きする。
+  const datasets = window.YakiimoDashboard.buildDatasets([], {
+    resolveColor: (key) => getThemeColor(channelDisplayByKey[key].varName),
+    applyMedian: false,
+    baseDatasetOptions: {
       borderWidth: 2,
       pointRadius: 0,
       pointHoverRadius: 5,
       pointHoverBorderWidth: 2,
-      pointHoverBackgroundColor: color,
-      pointHoverBorderColor: bgCard,
       tension: 0.5,
       spanGaps: true,
       parsing: false, // {x, y} をそのまま使う
-    };
+    },
+  });
+  // pointHoverBackgroundColor / pointHoverBorderColor は theme 追従が必要ゆえ個別補完。
+  // backgroundColor は buildDatasets が "color + bgAlphaHex" 形式 (例: #c25e1f1a) で出すが、
+  // 旧コードは withAlpha で rgba 文字列を入れていたので、互換性維持のため上書きする。
+  datasets.forEach((ds, i) => {
+    const color = getThemeColor(CHANNELS[i].varName);
+    ds.backgroundColor = withAlpha(color, 0.10);
+    ds.pointHoverBackgroundColor = color;
+    ds.pointHoverBorderColor = bgCard;
   });
 
   chart = new Chart(ctx, {
@@ -755,7 +735,7 @@ function applyWindowToChart() {
     const ch = CHANNELS[i];
     const series = fullSessionData[ch.key] || [];
     const windowed = minMs > 0 ? series.filter(p => p.x >= minMs) : series.slice();
-    chart.data.datasets[i].data = median3Filter(windowed);
+    chart.data.datasets[i].data = window.YakiimoDashboard.median3Filter(windowed);
   }
   chart.update("none");
 }

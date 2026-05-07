@@ -458,6 +458,9 @@
   <!-- Supabase JS SDK (live と同じ version 系) -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
+  <!-- dashboard-shared (CHANNEL_DISPLAY / median3Filter / buildDatasets を window.YakiimoDashboard に export) -->
+  <script src="/dashboard-shared.js"></script>
+
   <script>
     // build.sh が以下 2 つのプレースホルダを env で置換する
     const SUPABASE_URL = "[ADMIN_SUPABASE_URL]";
@@ -513,14 +516,15 @@
     // 詳細チャートインスタンス
     let detailChart = null;
 
-    // 詳細モードで表示する 5 ch (live dashboard と同じ key/順序、admin 用に色は固定値で踏襲)
-    const CHANNELS = [
-      { key: "potato_internal", label: "芋 内部温度", color: "#c25e1f" },
-      { key: "potato_surface",  label: "芋 表面温度", color: "#e88c4d" },
-      { key: "kiln_ambient",    label: "釜内部温度", color: "#b14418" },
-      { key: "stone_surface",   label: "石 表面温度", color: "#a05c2a" },
-      { key: "env",             label: "気温",       color: "#5a8c66" },
-    ];
+    // 詳細モードで表示する 5 ch は dashboard-shared から借用 (window.YakiimoDashboard 経由)。
+    // 色は CSS variable (--color-ch-*) 経由で解決し、light/dark theme 切替に追従する。
+    const CHANNELS = window.YakiimoDashboard.CHANNEL_DISPLAY;
+    const channelDisplayByKey = Object.fromEntries(CHANNELS.map((c) => [c.key, c]));
+
+    // CSS variable から色を解決 (live と同じ仕組み)
+    function getThemeColor(varName) {
+      return getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+    }
 
     // ============================================================
     // 共通 util
@@ -578,23 +582,8 @@
       return (Date.now() - end) < LIVE_THRESHOLD_MS;
     }
 
-    // 3点中央値フィルタ (live dashboard の median3Filter と同等ロジック)
+    // 3点中央値フィルタは dashboard-shared に集約済 (window.YakiimoDashboard.median3Filter)。
     // MAX31855 の量子化ジッタ (±0.25°C / 1 LSB) を視覚的に除去するためにのみ使う。
-    function median3Filter(points) {
-      if (!points || points.length < 3) return points ? points.slice() : points;
-      const out = new Array(points.length);
-      for (let i = 0; i < points.length; i++) {
-        const a = points[Math.max(0, i - 1)].y;
-        const b = points[i].y;
-        const c = points[Math.min(points.length - 1, i + 1)].y;
-        const sorted = [a, b, c].filter(v => v != null && !isNaN(v)).sort((x, y) => x - y);
-        out[i] = {
-          x: points[i].x,
-          y: sorted.length === 0 ? null : sorted[Math.floor(sorted.length / 2)],
-        };
-      }
-      return out;
-    }
 
     // ============================================================
     // 一覧モード
@@ -741,39 +730,28 @@
       };
     }
 
-    function buildDatasets(logs) {
-      // channel 別に {x, y} 配列を構築 (ASC を維持)
-      const grouped = {};
-      for (const ch of CHANNELS) grouped[ch.key] = [];
-      for (const r of logs) {
-        if (grouped[r.channel] === undefined) continue;
-        if (typeof r.temp_c !== "number") continue;
-        grouped[r.channel].push({ x: new Date(r.measured_at).valueOf(), y: r.temp_c });
-      }
-
-      return CHANNELS.map((ch) => ({
-        label: ch.label,
-        data: median3Filter(grouped[ch.key] || []),
-        borderColor: ch.color,
-        backgroundColor: ch.color + "22",
-        borderWidth: 2,
-        pointRadius: 0,
-        pointHoverRadius: 4,
-        tension: 0.5,
-        spanGaps: true,
-        parsing: false,
-      }));
-    }
-
     function renderDetailChart(logs) {
       if (detailChart) {
         detailChart.destroy();
         detailChart = null;
       }
       const ctx = $detailCanvas.getContext("2d");
+      // dashboard-shared の buildDatasets で channel グループ化 + median3 + dataset 構築を一括処理。
+      // 色は CSS variable から解決 (light/dark theme 切替に追従)。
+      const datasets = window.YakiimoDashboard.buildDatasets(logs, {
+        resolveColor: (key) => getThemeColor(channelDisplayByKey[key].varName),
+        baseDatasetOptions: {
+          borderWidth: 2,
+          pointRadius: 0,
+          pointHoverRadius: 4,
+          tension: 0.5,
+          spanGaps: true,
+          parsing: false,
+        },
+      });
       detailChart = new Chart(ctx, {
         type: "line",
-        data: { datasets: buildDatasets(logs) },
+        data: { datasets },
         options: {
           responsive: true,
           maintainAspectRatio: false,

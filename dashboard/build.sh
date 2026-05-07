@@ -17,6 +17,14 @@ set -euo pipefail
 
 LOG="[build]"
 
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+# dashboard-shared workspace の bundle を build (TypeScript → IIFE bundle)
+echo "$LOG dashboard-shared workspace を build 中..."
+(cd "$REPO_ROOT" && npm --workspace=@yakiimo/dashboard-shared run build)
+cp "$REPO_ROOT/dashboard-shared/dist/dashboard-shared.js" "$REPO_ROOT/dashboard/dashboard-shared.js"
+echo "$LOG dashboard-shared.js を $REPO_ROOT/dashboard に配置 ($(wc -c < "$REPO_ROOT/dashboard/dashboard-shared.js") bytes)"
+
 # 必須 env 確認
 : "${SUPABASE_URL:?$LOG SUPABASE_URL が未設定。CF Pages Settings の Environment variables で設定すること}"
 : "${SUPABASE_ANON_KEY:?$LOG SUPABASE_ANON_KEY が未設定}"
@@ -75,3 +83,9 @@ else
 fi
 
 echo "$LOG main.js を生成完了 ($(wc -c < main.js) bytes)"
+
+# 最終 sanity check: dashboard-shared.js が出力ディレクトリに存在することを確認
+if [ ! -f "$REPO_ROOT/dashboard/dashboard-shared.js" ]; then
+  echo "$LOG ERROR: dashboard-shared.js が出力ディレクトリに無い" >&2
+  exit 1
+fi
