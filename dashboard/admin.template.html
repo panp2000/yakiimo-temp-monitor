@@ -617,8 +617,11 @@
 
       tbody.innerHTML = "";
       for (const s of sessions) {
-        const live = isLive(s.ended_at);
         const isPublic = s.is_public === true;
+        // LIVE バッジは「is_public=true かつ直近 60 秒に新データ」のみで表示。
+        // is_public 排他保証 (Phase 1) と整合させ、セッション切替期に旧 + 新 が
+        // 同時 LIVE 表示されるのを防ぐ。
+        const live = isPublic && isLive(s.ended_at);
         const toggling = togglingSet.has(s.session_id);
         const btnLabel = isPublic ? "PUBLIC" : "private";
         const stateCell = live
