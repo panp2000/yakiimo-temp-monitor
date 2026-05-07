@@ -36,6 +36,19 @@ ingest リクエストの妥当性検証を 3 層で多重化し、どの層が�
 
 L1+L2 は Worker が contract モジュールを呼んで実行し、L3 は migrations 007/008 で導入した SQL 関数 + BEFORE INSERT トリガーが担います。Worker をバイパスして直接 Supabase に書こうとしても、L3 で必ず再検証されます。
 
+### Contract version negotiation
+
+Cloudflare Worker の `verifyEnvelope` は `SUPPORTED_VERSIONS` 配列を持ち、受信した signature を各 version の message format で順次検証試行します。これにより ESP32 firmware の OTA 遅延等で非アトミックな contract version migration が起きても、Worker と ESP32 が異なる version を保持している期間でも ingest が継続します。
+
+新 version を導入する際は:
+
+1. `contract/src/envelope.ts` の `SUPPORTED_VERSIONS` を `[1, 2]` 等に拡張、`CONTRACT_VERSION` を 2 に
+2. Worker を deploy (新旧両受け)
+3. ESP32 firmware を新 version で書込み (順次)
+4. 全 ESP32 が新 version 化したら `SUPPORTED_VERSIONS` を `[2]` に絞り、再 deploy
+
+の 4 段階で migrate 可能です。
+
 ## アーキテクチャ
 
 ```
@@ -419,6 +432,8 @@ select * from cron.job_run_details order by start_time desc limit 5;
 - ドメイン辞書 (CONTEXT): [`docs/CONTEXT.md`](docs/CONTEXT.md)
 - Ingest Contract 仕様 (auto-generated): [`docs/CONTRACT.md`](docs/CONTRACT.md)
 - 設計判断記録 (ADR): [`docs/adr/`](docs/adr/)
+  - [`0001-defer-plausibility-validation.md`](docs/adr/0001-defer-plausibility-validation.md) — Plausibility validation の deferral
+  - [`0002-defer-2038-time-handling.md`](docs/adr/0002-defer-2038-time-handling.md) — 2038 年問題の根治 defer
 - Contract package 実体: [`contract/src/`](contract/src/)
 - ダッシュボード詳細: [`dashboard/README.md`](dashboard/README.md)
 - Worker 詳細: [`worker/README.md`](worker/README.md)
