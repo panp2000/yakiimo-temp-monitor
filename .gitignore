@@ -28,3 +28,8 @@ worker/.wrangler/
 
 # Supabase CLI キャッシュ
 supabase/.temp/
+
+.dev.vars*
+!.dev.vars.example
+.env*
+!.env.example
