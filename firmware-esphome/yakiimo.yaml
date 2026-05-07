@@ -110,7 +110,7 @@ i2c:
 http_request:
   id: supabase_http
   timeout: 10s
-  verify_ssl: false   # 当初は無効化。CA 固定は後追い改善(docs/esphome-setup.md 参照)
+  verify_ssl: false   # 意図的に無効。HMAC が integrity 担保、CA 固定は defer (docs/adr/0003-defer-tls-ca-pinning.md)
   useragent: "yakiimo-temp-monitor/0.2-esphome"
 
 # --- センサー ---
