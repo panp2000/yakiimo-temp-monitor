@@ -1,11 +1,16 @@
+import {
+  TIMESTAMP_HEADER,
+  SIGNATURE_HEADER,
+  CONTRACT_VERSION,
+  verifyEnvelope,
+} from "@yakiimo/contract/envelope";
+import { validateLogRow } from "@yakiimo/contract/payload";
+
 interface Env {
   SUPABASE_URL: string;
   SUPABASE_SERVICE_ROLE_KEY: string;
   INGEST_HMAC_SECRET: string;
 }
-
-const TIMESTAMP_TOLERANCE_PAST_SEC = 300;   // 5 分
-const TIMESTAMP_TOLERANCE_FUTURE_SEC = 60;  // 1 分
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -21,22 +26,16 @@ export default {
       return new Response("Unsupported Media Type", { status: 415 });
     }
 
-    // 必須ヘッダ
-    const tsHeader = request.headers.get("x-yakiimo-timestamp");
-    const sigHeader = request.headers.get("x-yakiimo-signature");
+    // 必須ヘッダ (HTTP ヘッダは大小無視。Worker runtime は小文字で来る)
+    const tsHeader = request.headers.get(TIMESTAMP_HEADER.toLowerCase());
+    const sigHeader = request.headers.get(SIGNATURE_HEADER.toLowerCase());
     if (!tsHeader || !sigHeader) {
       return new Response("Missing auth headers", { status: 401 });
     }
 
-    // timestamp 検証
     const ts = parseInt(tsHeader, 10);
     if (!Number.isFinite(ts)) {
       return new Response("Invalid timestamp", { status: 401 });
-    }
-    const now = Math.floor(Date.now() / 1000);
-    if (ts < now - TIMESTAMP_TOLERANCE_PAST_SEC || ts > now + TIMESTAMP_TOLERANCE_FUTURE_SEC) {
-      console.warn(`timestamp out of range: ts=${ts} now=${now}`);
-      return new Response("Timestamp out of range", { status: 401 });
     }
 
     // body 取得
@@ -45,11 +44,50 @@ export default {
       return new Response("Empty body", { status: 400 });
     }
 
-    // HMAC 検証
-    const expected = await computeHmacHex(env.INGEST_HMAC_SECRET, `${ts}\n${body}`);
-    if (!constantTimeEquals(expected, sigHeader.toLowerCase())) {
-      console.warn("HMAC mismatch");
-      return new Response("Invalid signature", { status: 401 });
+    // Layer 1: Envelope 検証 (HMAC + timestamp tolerance + version)
+    const envelopeResult = await verifyEnvelope({
+      secret: env.INGEST_HMAC_SECRET,
+      version: CONTRACT_VERSION,
+      timestamp: ts,
+      signature: sigHeader,
+      body,
+      now: Math.floor(Date.now() / 1000),
+    });
+    if (!envelopeResult.ok) {
+      console.warn(`envelope rejected: ${envelopeResult.error} ts=${ts}`);
+      switch (envelopeResult.error) {
+        case "version_unsupported":
+          return new Response("Contract version unsupported", { status: 401 });
+        case "timestamp_out_of_range":
+          return new Response("Timestamp out of range", { status: 401 });
+        case "signature_mismatch":
+          return new Response("Invalid signature", { status: 401 });
+      }
+    }
+
+    // Layer 2: Payload 検証 (LogRow array)
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body);
+    } catch (_e) {
+      return new Response("Invalid JSON", { status: 400 });
+    }
+    if (!Array.isArray(parsed)) {
+      return new Response("Body must be an array of LogRow", { status: 400 });
+    }
+    const validationErrors: { index: number; errors: unknown[] }[] = [];
+    for (let i = 0; i < parsed.length; i++) {
+      const result = validateLogRow(parsed[i]);
+      if (!result.ok) {
+        validationErrors.push({ index: i, errors: result.errors });
+      }
+    }
+    if (validationErrors.length > 0) {
+      console.warn(`payload validation failed: ${JSON.stringify(validationErrors).slice(0, 500)}`);
+      return new Response(
+        JSON.stringify({ error: "payload_invalid", details: validationErrors }),
+        { status: 422, headers: { "Content-Type": "application/json" } },
+      );
     }
 
     // Supabase へ転送
@@ -66,35 +104,11 @@ export default {
 
     if (!upstream.ok) {
       const detail = await upstream.text().catch(() => "");
-      console.error(`Supabase upstream error status=${upstream.status} body=${detail.slice(0, 500)}`);
+      console.error(`supabase upstream error status=${upstream.status} body=${detail.slice(0, 500)}`);
       return new Response(`Upstream error: ${upstream.status}`, { status: 502 });
     }
 
-    console.log(`ingest OK status=${upstream.status} body_len=${body.length}`);
+    console.log(`ingest OK rows=${parsed.length} body_len=${body.length}`);
     return new Response(null, { status: upstream.status });
   },
 };
-
-async function computeHmacHex(secret: string, message: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const key = await crypto.subtle.importKey(
-    "raw",
-    encoder.encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const sig = await crypto.subtle.sign("HMAC", key, encoder.encode(message));
-  return Array.from(new Uint8Array(sig))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-function constantTimeEquals(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let result = 0;
-  for (let i = 0; i < a.length; i++) {
-    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return result === 0;
-}

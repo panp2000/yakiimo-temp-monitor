@@ -8,6 +8,9 @@
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "@yakiimo/contract": "*"
+  },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250101.0",
     "typescript": "^5.4.0",
