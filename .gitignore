@@ -33,6 +33,10 @@ supabase/.temp/
 contract/node_modules/
 contract/dist/
 
+# dashboard-shared package
+dashboard-shared/node_modules/
+dashboard-shared/dist/
+
 # root workspace
 node_modules/
 
