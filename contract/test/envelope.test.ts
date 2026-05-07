@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   CONTRACT_VERSION,
+  SUPPORTED_VERSIONS,
   buildSignedMessage,
   signEnvelope,
   verifyEnvelope,
@@ -16,37 +17,23 @@ describe("signEnvelope / verifyEnvelope round-trip", () => {
   const SECRET = "test-secret-1234567890";
   const NOW = 1700000000;
 
-  it("accepts valid signature within tolerance", async () => {
+  it("accepts valid signature within tolerance and returns version", async () => {
     const sig = await signEnvelope(SECRET, NOW, "body-x");
     const result = await verifyEnvelope({
       secret: SECRET,
-      version: CONTRACT_VERSION,
       timestamp: NOW,
       signature: sig,
       body: "body-x",
       now: NOW,
     });
     expect(result.ok).toBe(true);
-  });
-
-  it("rejects with version_unsupported for unknown version", async () => {
-    const sig = await signEnvelope(SECRET, NOW, "body-x");
-    const result = await verifyEnvelope({
-      secret: SECRET,
-      version: 99,
-      timestamp: NOW,
-      signature: sig,
-      body: "body-x",
-      now: NOW,
-    });
-    expect(result).toEqual({ ok: false, error: "version_unsupported" });
+    if (result.ok) expect(result.version).toBe(CONTRACT_VERSION);
   });
 
   it("rejects timestamp older than 300s past tolerance", async () => {
     const sig = await signEnvelope(SECRET, NOW, "body-x");
     const result = await verifyEnvelope({
       secret: SECRET,
-      version: CONTRACT_VERSION,
       timestamp: NOW,
       signature: sig,
       body: "body-x",
@@ -59,7 +46,6 @@ describe("signEnvelope / verifyEnvelope round-trip", () => {
     const sig = await signEnvelope(SECRET, NOW + 100, "body-x");
     const result = await verifyEnvelope({
       secret: SECRET,
-      version: CONTRACT_VERSION,
       timestamp: NOW + 100,
       signature: sig,
       body: "body-x",
@@ -72,7 +58,6 @@ describe("signEnvelope / verifyEnvelope round-trip", () => {
     const sig = await signEnvelope("other-secret", NOW, "body-x");
     const result = await verifyEnvelope({
       secret: SECRET,
-      version: CONTRACT_VERSION,
       timestamp: NOW,
       signature: sig,
       body: "body-x",
@@ -85,12 +70,39 @@ describe("signEnvelope / verifyEnvelope round-trip", () => {
     const sig = await signEnvelope(SECRET, NOW, "body-original");
     const result = await verifyEnvelope({
       secret: SECRET,
-      version: CONTRACT_VERSION,
       timestamp: NOW,
       signature: sig,
       body: "body-tampered",
       now: NOW,
     });
     expect(result).toEqual({ ok: false, error: "signature_mismatch" });
+  });
+
+  it("rejects malformed hex signature", async () => {
+    const result = await verifyEnvelope({
+      secret: SECRET,
+      timestamp: NOW,
+      signature: "not-a-hex-string!@#$",
+      body: "body-x",
+      now: NOW,
+    });
+    expect(result).toEqual({ ok: false, error: "signature_mismatch" });
+  });
+
+  it("rejects odd-length hex signature", async () => {
+    const result = await verifyEnvelope({
+      secret: SECRET,
+      timestamp: NOW,
+      signature: "abc",  // odd length
+      body: "body-x",
+      now: NOW,
+    });
+    expect(result).toEqual({ ok: false, error: "signature_mismatch" });
+  });
+});
+
+describe("SUPPORTED_VERSIONS", () => {
+  it("contains current CONTRACT_VERSION", () => {
+    expect((SUPPORTED_VERSIONS as readonly number[]).includes(CONTRACT_VERSION)).toBe(true);
   });
 });

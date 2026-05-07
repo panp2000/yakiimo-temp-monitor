@@ -33,6 +33,7 @@ export interface LogRow {
 }
 
 export type PayloadValidationError =
+  | { field: "shape"; reason: "not_an_object" | "is_array" }
   | { field: "device_id"; reason: "regex_mismatch" }
   | { field: "session_id"; reason: "regex_mismatch" }
   | { field: "measured_at"; reason: "not_iso8601" }
@@ -49,7 +50,10 @@ export function validateLogRow(input: unknown): ValidateLogRowResult {
   const errors: PayloadValidationError[] = [];
 
   if (typeof input !== "object" || input === null) {
-    return { ok: false, errors: [{ field: "device_id", reason: "regex_mismatch" }] };
+    return { ok: false, errors: [{ field: "shape", reason: "not_an_object" }] };
+  }
+  if (Array.isArray(input)) {
+    return { ok: false, errors: [{ field: "shape", reason: "is_array" }] };
   }
   const r = input as Record<string, unknown>;
 

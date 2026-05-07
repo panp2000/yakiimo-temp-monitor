@@ -38,7 +38,12 @@ constexpr int YAKIIMO_CHANNELS_COUNT = ${CHANNELS.length};
 
 // 署名対象メッセージを構築する。
 // 形式: \`\${version}\\n\${timestamp_unix_sec}\\n\${body}\`
-inline std::string yakiimo_build_signed_message(unsigned long timestamp_unix_sec, const std::string& body) {
+//
+// 注: 引数は unsigned long long (64-bit)。ESP32 firmware (Arduino-ESP32) の
+// time_t は signed 32-bit ゆえ 2038-01-19 にラップする (詳細は ADR-0002)。
+// ここでは内部一貫性 (header timestamp と HMAC message timestamp の cast 幅
+// 統一) のみ確保し、根治は framework 64-bit time_t 採用待ち。
+inline std::string yakiimo_build_signed_message(unsigned long long timestamp_unix_sec, const std::string& body) {
   return std::to_string(YAKIIMO_CONTRACT_VERSION) + "\\n" + std::to_string(timestamp_unix_sec) + "\\n" + body;
 }
 `;

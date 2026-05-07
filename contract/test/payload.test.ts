@@ -71,9 +71,37 @@ describe("validateLogRow", () => {
     expect(result.ok).toBe(false);
   });
 
-  it("rejects non-object input", () => {
+  it("rejects null input (shape:not_an_object)", () => {
     const result = validateLogRow(null);
     expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors).toContainEqual({ field: "shape", reason: "not_an_object" });
+    }
+  });
+
+  it("rejects primitive input (shape:not_an_object)", () => {
+    const result = validateLogRow(42);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors).toContainEqual({ field: "shape", reason: "not_an_object" });
+    }
+  });
+
+  it("rejects array input (shape:is_array)", () => {
+    const result = validateLogRow([]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors).toContainEqual({ field: "shape", reason: "is_array" });
+    }
+  });
+
+  it("rejects array even with row-like elements", () => {
+    // attacker が [{...valid row...}] を「単一 row」として誤投入した場合
+    const result = validateLogRow([{ device_id: "esp32-01", session_id: "test", measured_at: "2026-05-07T01:23:45Z", channel: "env", temp_c: 22, humidity_pct: 50, pressure_hpa: 1013 }]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors).toContainEqual({ field: "shape", reason: "is_array" });
+    }
   });
 
   it("CHANNELS is exactly 5 known values", () => {
