@@ -295,6 +295,65 @@
       height: 100% !important;
     }
 
+    /* ===== 編集 UI (Phase 7) ===== */
+    .session-meta-stats input[type="text"],
+    .session-meta-stats input[type="number"],
+    .session-meta-stats input[type="datetime-local"],
+    .session-meta-stats select,
+    .session-meta-stats textarea {
+      width: 100%;
+      padding: 6px 10px;
+      border: 1px solid var(--border-soft, #d8d0c0);
+      border-radius: 6px;
+      background: var(--bg-card, #fff);
+      color: var(--ink, #222);
+      font-family: var(--font-body, system-ui);
+      font-size: 0.95rem;
+      box-sizing: border-box;
+    }
+    .session-meta-stats textarea { resize: vertical; min-height: 80px; }
+    .session-meta-stats .full-row { grid-column: 1 / -1; }
+
+    .ghost-btn {
+      padding: 4px 12px;
+      border: 1px solid var(--border-soft);
+      background: transparent;
+      color: var(--ink-muted, #555);
+      border-radius: 6px;
+      font-size: 0.85rem;
+      cursor: pointer;
+      margin-left: 8px;
+      font-family: var(--font-body);
+    }
+    .ghost-btn:hover { background: var(--bg-soft, #f5efe3); color: var(--ink); }
+
+    .edit-actions {
+      margin-top: 24px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .primary-btn {
+      padding: 10px 24px;
+      background: var(--accent-primary, #c25e1f);
+      color: var(--bg-card, #fff);
+      border: none;
+      border-radius: 6px;
+      font-size: 0.95rem;
+      font-family: var(--font-body);
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .primary-btn:hover { background: var(--accent-primary-hover, #a64f18); }
+    .primary-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .save-status {
+      font-size: 0.9rem;
+      color: var(--ink-muted);
+    }
+    .save-status.ok { color: var(--accent-primary); }
+    .save-status.err { color: #c00; }
+
     footer.admin-footer {
       max-width: 1280px;
       margin: 32px auto 24px;
@@ -350,18 +409,40 @@
 
       <div class="session-meta">
         <h2 class="session-meta-id" id="detail-session-id"></h2>
-        <p class="session-meta-display-name" id="detail-display-name"></p>
         <dl class="session-meta-stats">
-          <div><dt>用途</dt><dd id="detail-purpose">—</dd></div>
+          <div><dt>表示名</dt><dd>
+            <input type="text" id="edit-display-name" placeholder="例: 2026-05-06 朝の焼き芋">
+          </dd></div>
+          <div><dt>用途</dt><dd>
+            <select id="edit-purpose">
+              <option value="cook">焼き</option>
+              <option value="cool">冷却試験</option>
+              <option value="test">テスト</option>
+              <option value="other">その他</option>
+            </select>
+          </dd></div>
           <div><dt>公開</dt><dd id="detail-is-public">—</dd></div>
           <div><dt>開始</dt><dd id="detail-started">—</dd></div>
           <div><dt>終了</dt><dd id="detail-ended">—</dd></div>
           <div><dt>期間</dt><dd id="detail-duration">—</dd></div>
           <div><dt>行数</dt><dd id="detail-row-count">—</dd></div>
-          <div><dt>火入れ</dt><dd id="detail-fire-start">—</dd></div>
-          <div><dt>メモ</dt><dd id="detail-notes">—</dd></div>
-          <div><dt>糖度 (Brix)</dt><dd id="detail-brix">—</dd></div>
+          <div><dt>火入れ時刻</dt><dd>
+            <input type="datetime-local" id="edit-fire-start" step="1">
+            <button type="button" id="btn-fire-now" class="ghost-btn">今すぐ火入れ</button>
+            <button type="button" id="btn-fire-clear" class="ghost-btn">クリア</button>
+          </dd></div>
+          <div><dt>糖度 (Brix)</dt><dd>
+            <input type="number" id="edit-brix" step="0.1" min="0" max="40" placeholder="例: 18.5">
+          </dd></div>
+          <div class="full-row"><dt>メモ</dt><dd>
+            <textarea id="edit-notes" rows="4" placeholder="焼き上がりの感想、観察事項、改善点等"></textarea>
+          </dd></div>
         </dl>
+
+        <div class="edit-actions">
+          <button type="button" id="btn-save" class="primary-btn">保存</button>
+          <span id="save-status" class="save-status"></span>
+        </div>
       </div>
 
       <div class="session-detail-chart-wrap">
@@ -396,19 +477,25 @@
     const detailView  = document.getElementById("session-detail-view");
     const backBtn     = document.getElementById("back-to-list");
 
-    // 詳細 DOM
+    // 詳細 DOM (read-only 表示)
     const $detailSid       = document.getElementById("detail-session-id");
-    const $detailName      = document.getElementById("detail-display-name");
-    const $detailPurpose   = document.getElementById("detail-purpose");
     const $detailPublic    = document.getElementById("detail-is-public");
     const $detailStarted   = document.getElementById("detail-started");
     const $detailEnded     = document.getElementById("detail-ended");
     const $detailDuration  = document.getElementById("detail-duration");
     const $detailRowCount  = document.getElementById("detail-row-count");
-    const $detailFireStart = document.getElementById("detail-fire-start");
-    const $detailNotes     = document.getElementById("detail-notes");
-    const $detailBrix      = document.getElementById("detail-brix");
     const $detailCanvas    = document.getElementById("session-detail-chart");
+
+    // 詳細 DOM (編集 input)
+    const $editDisplayName = document.getElementById("edit-display-name");
+    const $editPurpose     = document.getElementById("edit-purpose");
+    const $editFireStart   = document.getElementById("edit-fire-start");
+    const $editBrix        = document.getElementById("edit-brix");
+    const $editNotes       = document.getElementById("edit-notes");
+    const $btnFireNow      = document.getElementById("btn-fire-now");
+    const $btnFireClear    = document.getElementById("btn-fire-clear");
+    const $btnSave         = document.getElementById("btn-save");
+    const $saveStatus      = document.getElementById("save-status");
 
     // service_role を使って RLS を bypass (CF Access gate 済の前提)
     const sb = window.supabase.createClient(
@@ -730,20 +817,41 @@
       });
     }
 
+    // datetime-local <-> ISO 変換 util
+    function toDatetimeLocal(isoString) {
+      if (!isoString) return "";
+      const d = new Date(isoString);
+      if (isNaN(d.getTime())) return "";
+      const pad = (n) => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    }
+
+    function fromDatetimeLocal(value) {
+      if (!value) return null;
+      const d = new Date(value);
+      if (isNaN(d.getTime())) return null;
+      return d.toISOString();
+    }
+
     function renderDetailMeta(session, rowCount) {
+      // read-only 表示
       $detailSid.textContent = session?.session_id || "(該当なし)";
-      $detailName.textContent = session?.display_name || "";
-      $detailPurpose.textContent = session?.purpose || "—";
       $detailPublic.textContent = session?.is_public === true ? "PUBLIC" : "private";
       $detailStarted.textContent = formatTs(session?.started_at);
       $detailEnded.textContent = formatTs(session?.ended_at);
       $detailDuration.textContent = formatDuration(session?.started_at, session?.ended_at);
       $detailRowCount.textContent = rowCount.toLocaleString("ja-JP");
-      $detailFireStart.textContent = session?.fire_start_at ? formatTs(session.fire_start_at) : "—";
-      $detailNotes.textContent = session?.notes ? session.notes : "—";
-      $detailBrix.textContent = (session?.brix !== null && session?.brix !== undefined)
+
+      // 編集 input 初期化
+      $editDisplayName.value = session?.display_name || "";
+      $editPurpose.value = session?.purpose || "cook";
+      $editFireStart.value = session?.fire_start_at
+        ? toDatetimeLocal(session.fire_start_at)
+        : "";
+      $editBrix.value = (session?.brix !== null && session?.brix !== undefined)
         ? String(session.brix)
-        : "—";
+        : "";
+      $editNotes.value = session?.notes || "";
     }
 
     async function loadDetail(sessionId) {
@@ -806,6 +914,57 @@
     backBtn.addEventListener("click", () => {
       // ?session= を消すことで一覧モードへ戻る
       window.location.search = "";
+    });
+
+    // ============================================================
+    // 編集 UI (Phase 7)
+    // ============================================================
+    $btnFireNow.addEventListener("click", () => {
+      $editFireStart.value = toDatetimeLocal(new Date().toISOString());
+    });
+
+    $btnFireClear.addEventListener("click", () => {
+      $editFireStart.value = "";
+    });
+
+    $btnSave.addEventListener("click", async () => {
+      const sessionId = getSessionIdFromURL();
+      if (!sessionId) return;
+
+      const brixRaw = $editBrix.value.trim();
+      const updates = {
+        display_name: $editDisplayName.value.trim() || null,
+        purpose: $editPurpose.value,
+        fire_start_at: fromDatetimeLocal($editFireStart.value),
+        notes: $editNotes.value.trim() || null,
+        brix: brixRaw === "" ? null : parseFloat(brixRaw),
+      };
+
+      $btnSave.disabled = true;
+      $saveStatus.textContent = "保存中…";
+      $saveStatus.className = "save-status";
+
+      try {
+        const { error } = await sb
+          .from("yakiimo_sessions")
+          .update(updates)
+          .eq("session_id", sessionId);
+
+        if (error) throw error;
+
+        $saveStatus.textContent = "保存しました";
+        $saveStatus.className = "save-status ok";
+        setTimeout(() => {
+          $saveStatus.textContent = "";
+          $saveStatus.className = "save-status";
+        }, 3000);
+      } catch (e) {
+        console.error("save 失敗", e);
+        $saveStatus.textContent = `エラー: ${e.message || e}`;
+        $saveStatus.className = "save-status err";
+      } finally {
+        $btnSave.disabled = false;
+      }
     });
 
     // 初期ルーティング
