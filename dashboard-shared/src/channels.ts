@@ -8,8 +8,8 @@ export interface ChannelDisplay {
 }
 
 export const CHANNEL_DISPLAY: ReadonlyArray<ChannelDisplay> = [
-  { key: "potato_internal", label: "芋 内部温度", icon: "内", varName: "--color-ch-potato-internal" },
-  { key: "potato_surface",  label: "芋 表面温度", icon: "皮", varName: "--color-ch-potato-surface"  },
+  { key: "potato_internal", label: "アルミホイル 内部", icon: "内", varName: "--color-ch-potato-internal" },
+  { key: "potato_surface",  label: "直焼き 内部", icon: "皮", varName: "--color-ch-potato-surface"  },
   { key: "kiln_ambient",    label: "釜内部温度", icon: "釜", varName: "--color-ch-kiln-ambient"    },
   { key: "stone_surface",   label: "石 表面温度", icon: "石", varName: "--color-ch-stone-surface"   },
   { key: "env",             label: "気温",       icon: "外", varName: "--color-ch-env"             },

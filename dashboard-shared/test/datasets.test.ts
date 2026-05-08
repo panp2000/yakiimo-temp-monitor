@@ -77,11 +77,11 @@ describe("buildDatasets", () => {
     ];
 
     const dsRaw = buildDatasets(logs, { resolveColor: fakeColor, applyMedian: false });
-    const internalRaw = dsRaw.find((d) => d.label === "芋 内部温度")!;
+    const internalRaw = dsRaw.find((d) => d.label === "アルミホイル 内部")!;
     expect(internalRaw.data.map((p) => p.y)).toEqual([10, 999, 12]);
 
     const dsMed = buildDatasets(logs, { resolveColor: fakeColor, applyMedian: true });
-    const internalMed = dsMed.find((d) => d.label === "芋 内部温度")!;
+    const internalMed = dsMed.find((d) => d.label === "アルミホイル 内部")!;
     // i=1 で median(10, 999, 12) = 12 なので spike が消える
     expect(internalMed.data.map((p) => p.y)).toEqual([10, 12, 12]);
   });
@@ -93,7 +93,7 @@ describe("buildDatasets", () => {
       makeLog("potato_internal", "2026-05-07T00:00:02Z", 12),
     ];
     const ds = buildDatasets(logs, { resolveColor: fakeColor });
-    const internal = ds.find((d) => d.label === "芋 内部温度")!;
+    const internal = ds.find((d) => d.label === "アルミホイル 内部")!;
     expect(internal.data.map((p) => p.y)).toEqual([10, 12, 12]);
   });
 
@@ -116,7 +116,7 @@ describe("buildDatasets", () => {
       makeLog("env", "2026-05-07T00:00:01Z", 26),
     ];
     const ds = buildDatasets(logs, { resolveColor: fakeColor, applyMedian: false });
-    const internal = ds.find((d) => d.label === "芋 内部温度")!;
+    const internal = ds.find((d) => d.label === "アルミホイル 内部")!;
     const env = ds.find((d) => d.label === "気温")!;
     expect(internal.data.length).toBe(2);
     expect(env.data.length).toBe(2);
